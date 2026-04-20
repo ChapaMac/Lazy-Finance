@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "finanzas-mx-client",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "C:/Users/josec/OneDrive/Desktop/CLAUDE APPS/finanzas-mx/client",
+      "port": 5173
+    }
+  ]
+}
