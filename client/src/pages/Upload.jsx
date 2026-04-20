@@ -182,23 +182,23 @@ export default function Upload() {
               </button>
             ))}
           </div>
-        </div>
-
-          {detecting && (
-            <span className="flex items-center gap-1.5 text-xs text-amber-400 animate-pulse">
-              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
-              Detectando banco...
-            </span>
-          )}
-          {autoDetected && !detecting && (
-            <span className="flex items-center gap-1 text-xs text-emerald-400">
-              <CheckCircle size={11} />
-              Auto-detectado
-            </span>
-          )}
-          {!bank && !detecting && file && (
-            <span className="text-xs text-amber-500">Selecciona el banco para continuar</span>
-          )}
+          <div className="flex items-center gap-2 h-4">
+            {detecting && (
+              <span className="flex items-center gap-1.5 text-xs text-amber-400 animate-pulse">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 inline-block" />
+                Detectando banco...
+              </span>
+            )}
+            {autoDetected && !detecting && (
+              <span className="flex items-center gap-1 text-xs text-emerald-400">
+                <CheckCircle size={11} />
+                Auto-detectado
+              </span>
+            )}
+            {!bank && !detecting && file && (
+              <span className="text-xs text-amber-500">Selecciona el banco para continuar</span>
+            )}
+          </div>
         </div>
 
         {/* Format hint */}
