@@ -150,28 +150,39 @@ export default function Upload() {
         </div>
 
         {/* Bank selector */}
-        <div className="mt-4 flex items-center gap-3 flex-wrap">
+        <div className="mt-4 space-y-2">
           <span className="text-slate-600 text-xs font-medium uppercase tracking-wider">Banco</span>
-          <div className="flex gap-1 rounded-lg p-1" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="flex flex-wrap gap-1.5">
             {[
-              { id: 'BBVA', label: 'BBVA', abbr: 'BB', color: '#004481', formats: 'PDF · CSV' },
-              { id: 'AMEX', label: 'AmEx', abbr: 'AX', color: '#B8972B', formats: 'PDF · XLSX' },
+              { id: 'BBVA',       label: 'BBVA',       color: '#004481', ready: true },
+              { id: 'AMEX',       label: 'AmEx',        color: '#B8972B', ready: true },
+              { id: 'NU',         label: 'Nu',          color: '#820AD1', ready: false },
+              { id: 'SANTANDER',  label: 'Santander',   color: '#EC0000', ready: false },
+              { id: 'BANAMEX',    label: 'Banamex',     color: '#005DAA', ready: false },
+              { id: 'HSBC',       label: 'HSBC',        color: '#DB0011', ready: false },
+              { id: 'BANORTE',    label: 'Banorte',     color: '#E2001A', ready: false },
+              { id: 'SCOTIABANK', label: 'Scotiabank',  color: '#EC111A', ready: false },
             ].map(b => (
               <button
                 key={b.id}
-                onClick={() => { setBank(b.id); setAutoDetected(false) }}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                  bank === b.id ? 'bg-emerald-500 text-[#0B0F14] shadow-sm' : 'text-slate-500 hover:text-white'
+                onClick={() => b.ready && (setBank(b.id), setAutoDetected(false))}
+                title={b.ready ? b.label : 'Próximamente'}
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all border ${
+                  bank === b.id
+                    ? 'text-[#0B0F14] shadow-sm border-transparent'
+                    : b.ready
+                      ? 'text-slate-400 hover:text-white border-white/[0.06] hover:border-white/[0.15]'
+                      : 'text-slate-700 border-white/[0.04] cursor-not-allowed'
                 }`}
+                style={bank === b.id ? { background: b.color } : {}}
               >
-                <div className="w-4 h-4 rounded flex items-center justify-center flex-shrink-0" style={{ background: b.color }}>
-                  <span className="text-white font-bold" style={{ fontSize: '7px' }}>{b.abbr}</span>
-                </div>
+                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: b.color, opacity: b.ready ? 1 : 0.35 }} />
                 {b.label}
-                {bank !== b.id && <span className="text-slate-700 text-xs hidden sm:inline">{b.formats}</span>}
+                {!b.ready && <span className="text-slate-700 text-xs">pronto</span>}
               </button>
             ))}
           </div>
+        </div>
 
           {detecting && (
             <span className="flex items-center gap-1.5 text-xs text-amber-400 animate-pulse">
