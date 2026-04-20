@@ -184,23 +184,46 @@ export default function Dashboard() {
 
   // ── Empty state ─────────────────────────────────────────────────────────────
   const isEmpty = !data?.totalExpenses && !data?.categoryBreakdown?.length
-  if (isEmpty) return (
-    <div className="flex flex-col items-center justify-center h-96 gap-5">
-      <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
-        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <CreditCard size={24} className="text-slate-600" />
+  if (isEmpty) {
+    const emptyMonthLabel = new Date(selectedYear, selectedMonth - 1, 1)
+      .toLocaleDateString('es-MX', { month: 'long', year: 'numeric' })
+    return (
+      <div className="space-y-5">
+        {/* Keep navigation so user isn't trapped */}
+        <div className="flex items-center justify-between">
+          <h1 className="text-lg font-semibold text-gray-200">Dashboard</h1>
+          <div className="flex items-center gap-2">
+            <button onClick={prevMonth}
+              className="p-2 rounded-xl text-slate-500 hover:text-gray-300 transition-colors"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <ChevronLeft size={14} />
+            </button>
+            <span className="text-sm text-slate-400 capitalize min-w-32 text-center">{emptyMonthLabel}</span>
+            <button onClick={nextMonth}
+              className="p-2 rounded-xl text-slate-500 hover:text-gray-300 transition-colors"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <ChevronRight size={14} />
+            </button>
+          </div>
+        </div>
+        <div className="flex flex-col items-center justify-center h-80 gap-5">
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <CreditCard size={24} className="text-slate-600" />
+          </div>
+          <div className="text-center">
+            <h2 className="text-gray-200 font-semibold text-base">Sin datos este mes</h2>
+            <p className="text-slate-500 text-sm mt-1">No hay movimientos para {emptyMonthLabel}</p>
+          </div>
+          <button onClick={() => navigate('/upload')}
+            className="flex items-center gap-2 bg-green-500 hover:bg-green-400 text-black font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors">
+            <Upload size={15} />
+            Cargar estado de cuenta
+          </button>
+        </div>
       </div>
-      <div className="text-center">
-        <h2 className="text-gray-200 font-semibold text-base">Sin datos este mes</h2>
-        <p className="text-slate-500 text-sm mt-1">Carga tu primer estado de cuenta para comenzar</p>
-      </div>
-      <button onClick={() => navigate('/upload')}
-        className="flex items-center gap-2 bg-green-500 hover:bg-green-400 text-black font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors">
-        <Upload size={15} />
-        Cargar estado de cuenta
-      </button>
-    </div>
-  )
+    )
+  }
 
   // ── Derived values ──────────────────────────────────────────────────────────
   const totalExpenses  = data?.totalExpenses  || 0
