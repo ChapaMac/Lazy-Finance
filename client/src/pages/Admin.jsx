@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Users, TrendingUp, Calendar, Activity } from 'lucide-react'
+import { Users, Activity, Trash2 } from 'lucide-react'
 import Card from '../components/ui/Card'
 import { Skeleton } from '../components/ui/Skeleton'
 import api from '../utils/api'
@@ -18,6 +18,8 @@ export default function Admin() {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [fixing, setFixing] = useState(false)
+  const [fixResult, setFixResult] = useState(null)
 
   useEffect(() => {
     api.get('/api/admin/users')
@@ -32,6 +34,16 @@ export default function Admin() {
     </div>
   )
 
+  async function fixDec2026() {
+    if (!confirm('¿Borrar todas las transacciones con fecha diciembre 2026 (año incorrecto)?')) return
+    setFixing(true)
+    try {
+      const res = await api.delete('/api/admin/fix-dec-2026')
+      setFixResult(res.data.deleted)
+    } catch { setFixResult('Error') }
+    finally { setFixing(false) }
+  }
+
   const users = data?.users || []
   const totalTx = users.reduce((s, u) => s + u.transaction_count, 0)
   const activeUsers = users.filter(u => u.transaction_count > 0).length
@@ -43,6 +55,18 @@ export default function Admin() {
           <Activity size={15} className="text-violet-400" />
         </div>
         <h1 className="text-2xl font-bold text-white tracking-tight">Admin</h1>
+      </div>
+
+      {/* One-time fix */}
+      <div className="flex items-center gap-4 rounded-xl px-4 py-3" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
+        <Trash2 size={14} className="text-red-400 flex-shrink-0" />
+        <p className="text-slate-400 text-sm flex-1">Borrar transacciones con fecha <span className="text-white font-mono">diciembre 2026</span> (año detectado incorrectamente)</p>
+        {fixResult !== null
+          ? <span className="text-emerald-400 text-sm font-mono">{fixResult} borradas ✓</span>
+          : <button onClick={fixDec2026} disabled={fixing} className="px-3 py-1.5 rounded-lg text-sm font-medium text-red-400 transition-all disabled:opacity-50" style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)' }}>
+              {fixing ? 'Borrando...' : 'Borrar ahora'}
+            </button>
+        }
       </div>
 
       {/* Summary stats */}
