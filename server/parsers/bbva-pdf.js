@@ -22,6 +22,16 @@ function extractAmounts(str) {
 }
 
 function extractYear(text) {
+  const periodRe = [
+    /per[ií]odo[^0-9]*(20\d{2})/i,
+    /del\s+\d{1,2}\s+de\s+\w+(?:\s+de)?\s+(20\d{2})/i,
+    /\d{2}\/(ENE|FEB|MAR|ABR|MAY|JUN|JUL|AGO|SEP|OCT|NOV|DIC)\/(20\d{2})/i,
+    /\d{1,2}\/\d{1,2}\/(20\d{2})/,
+    /corte[^0-9]*(20\d{2})/i,
+  ]
+  const contextYears = periodRe.flatMap(r => { const m = text.match(r); return m ? [m[m.length - 1]] : [] })
+  if (contextYears.length) return contextYears.sort()[0]
+
   const freq = {}
   for (const y of (text.match(/20\d{2}/g) || [])) freq[y] = (freq[y] || 0) + 1
   return Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0] || String(new Date().getFullYear())

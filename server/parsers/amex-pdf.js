@@ -18,6 +18,19 @@ const DATE_RE = /^(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|a
 const SKIP_DESC = ['MONTO A DIFERIR', 'MESES EN AUTOM', 'CARGO 0', 'PAGO RECIBIDO']
 
 function extractYear(text) {
+  // Look for year in period/statement date contexts first — avoids picking
+  // the generation date (e.g. Jan 2026) over the actual statement year (Dec 2025)
+  const periodRe = [
+    /per[ií]odo[^0-9]*(20\d{2})/i,
+    /facturaci[oó]n[^0-9]*(20\d{2})/i,
+    /corte[^0-9]*(20\d{2})/i,
+    /del\s+\d{1,2}\s+de\s+\w+(?:\s+de)?\s+(20\d{2})/i,
+    /\d{1,2}\/\d{1,2}\/(20\d{2})/,
+  ]
+  const contextYears = periodRe.flatMap(r => { const m = text.match(r); return m ? [m[1]] : [] })
+  if (contextYears.length) return contextYears.sort()[0] // earliest context year
+
+  // Fallback: most frequent year
   const freq = {}
   for (const y of (text.match(/20\d{2}/g) || [])) freq[y] = (freq[y] || 0) + 1
   return Object.entries(freq).sort((a, b) => b[1] - a[1])[0]?.[0] || String(new Date().getFullYear())
