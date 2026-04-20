@@ -206,6 +206,7 @@ export default function Dashboard() {
   const totalExpenses  = data?.totalExpenses  || 0
   const totalIncome    = data?.totalIncome    || 0
   const netBalance     = totalIncome - totalExpenses
+  const ytd            = data?.yearTotals || { expenses: 0, income: 0, balance: 0 }
   const prevExpenses   = data?.prevTotalExpenses || 0
   const prevIncome     = data?.prevTotalIncome   || 0
   const prevNet        = prevIncome - prevExpenses
@@ -253,6 +254,34 @@ export default function Dashboard() {
             <FileDown size={13} />
             PDF
           </button>
+        </div>
+      </div>
+
+      {/* ── Year-to-date banner ───────────────────────────────────────────── */}
+      <div className="rounded-2xl px-5 py-4 flex items-center gap-6 flex-wrap"
+        style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className="text-xs font-semibold text-slate-500 uppercase tracking-widest">
+            {selectedYear} · Acumulado
+          </span>
+        </div>
+        <div className="flex items-center gap-6 flex-wrap">
+          <div>
+            <p className="text-xs text-slate-600 mb-0.5">Gastos</p>
+            <p className="text-base font-bold font-mono text-red-400">{formatMXN(ytd.expenses)}</p>
+          </div>
+          <div className="w-px h-8 bg-white/[0.06]" />
+          <div>
+            <p className="text-xs text-slate-600 mb-0.5">Ingresos</p>
+            <p className="text-base font-bold font-mono text-emerald-400">{formatMXN(ytd.income)}</p>
+          </div>
+          <div className="w-px h-8 bg-white/[0.06]" />
+          <div>
+            <p className="text-xs text-slate-600 mb-0.5">Balance neto</p>
+            <p className="text-base font-bold font-mono" style={{ color: ytd.balance >= 0 ? '#22C55E' : '#EF4444' }}>
+              {ytd.balance >= 0 ? '+' : ''}{formatMXN(ytd.balance)}
+            </p>
+          </div>
         </div>
       </div>
 

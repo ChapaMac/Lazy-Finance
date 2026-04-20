@@ -2,7 +2,7 @@ const express = require('express')
 const {
   getTotalByBank, getMonthlySpendByCategory, getLast6MonthsTrend,
   getTopMerchants, getMonthlyByCategoryRange, getDailySpend,
-  getTotalExpenses, getTotalIncome, getPagoTCTransactions, getPagoTCTotal, getLatestDataMonth,
+  getTotalExpenses, getTotalIncome, getYearTotals, getPagoTCTransactions, getPagoTCTotal, getLatestDataMonth,
   getAllExpenseTransactions, getAllMonthlyByCategory, getMonthlyExpenseTotals, getBudgets,
 } = require('../db/queries')
 const {
@@ -42,6 +42,7 @@ router.get('/dashboard', (req, res) => {
     pagoTCTransactions: getPagoTCTransactions(year, month, uid),
     budgets: getBudgets(uid),
     dataMonth,
+    yearTotals: getYearTotals(year, uid),
   })
 })
 

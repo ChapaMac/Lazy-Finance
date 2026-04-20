@@ -190,6 +190,13 @@ function getTotalIncome(year, month, userId) {
   return getDb().prepare(`SELECT COALESCE(ABS(SUM(amount)),0) as total FROM transactions WHERE strftime('%Y-%m', date) = ? AND amount < 0 AND user_id = ?`).get(m, userId)?.total || 0
 }
 
+function getYearTotals(year, userId) {
+  const y = String(year)
+  const expenses = getDb().prepare(`SELECT COALESCE(SUM(amount),0) as total FROM transactions WHERE strftime('%Y', date) = ? AND amount > 0 AND ${EXCLUDED} AND user_id = ?`).get(y, userId)?.total || 0
+  const income   = getDb().prepare(`SELECT COALESCE(ABS(SUM(amount)),0) as total FROM transactions WHERE strftime('%Y', date) = ? AND amount < 0 AND user_id = ?`).get(y, userId)?.total || 0
+  return { expenses, income, balance: income - expenses }
+}
+
 function getPagoTCTransactions(year, month, userId) {
   const m = `${year}-${String(month).padStart(2, '0')}`
   return getDb().prepare(`
@@ -321,7 +328,7 @@ module.exports = {
   getTransactions, countTransactions, getAllForExport, updateTransaction,
   getTotalByBank, getMonthlySpendByCategory, getLast6MonthsTrend,
   getTopMerchants, getMonthlyByCategoryRange, getDailySpend,
-  getTotalExpenses, getTotalIncome, getPagoTCTransactions, getPagoTCTotal,
+  getTotalExpenses, getTotalIncome, getYearTotals, getPagoTCTransactions, getPagoTCTotal,
   migrateIncomeCategory, migratePagoTCCategory, migrateTransferenciasCategory,
   migrateRecategorizeOtros, migrateRecategorizeAll,
   getAllExpenseTransactions, getAllMonthlyByCategory, getMonthlyExpenseTotals,
