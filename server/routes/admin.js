@@ -30,4 +30,11 @@ router.get('/users', adminOnly, (req, res) => {
   res.json({ users })
 })
 
+// Temporary: delete transactions with wrong year (2026 that should be 2025)
+router.delete('/fix-dec-2026', adminOnly, (req, res) => {
+  const db = getDb()
+  const result = db.prepare(`DELETE FROM transactions WHERE date >= '2026-12-01' AND date <= '2026-12-31'`).run()
+  res.json({ deleted: result.changes })
+})
+
 module.exports = router
