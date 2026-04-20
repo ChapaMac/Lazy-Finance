@@ -11,6 +11,7 @@ const transactionRoutes = require('./routes/transactions')
 const uploadRoutes = require('./routes/uploads')
 const insightRoutes = require('./routes/insights')
 const budgetRoutes = require('./routes/budgets')
+const adminRoutes = require('./routes/admin')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -41,6 +42,7 @@ app.use('/api/transactions', transactionRoutes)
 app.use('/api/uploads', uploadRoutes)
 app.use('/api/insights', insightRoutes)
 app.use('/api/budgets', budgetRoutes)
+app.use('/api/admin', adminRoutes)
 app.get('/api/health', (req, res) => res.json({ ok: true, ts: new Date().toISOString() }))
 
 // ── Serve React build in production ──────────────────────────────────────────

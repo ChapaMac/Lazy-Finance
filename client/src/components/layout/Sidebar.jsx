@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, ArrowUpDown, Upload, BarChart3, LogOut, Globe } from 'lucide-react'
+import { LayoutDashboard, ArrowUpDown, Upload, BarChart3, LogOut, Globe, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { useI18n } from '../../contexts/I18nContext'
 
@@ -11,7 +11,7 @@ const navItems = [
 ]
 
 export default function Sidebar() {
-  const { logout } = useAuth()
+  const { logout, user } = useAuth()
   const { t, lang, toggleLang } = useI18n()
 
   return (
@@ -55,6 +55,26 @@ export default function Sidebar() {
           </NavLink>
         ))}
       </nav>
+
+      {/* Admin link — only for user id 1 */}
+      {user?.id === 1 && (
+        <div className="px-3 pb-2">
+          <NavLink to="/admin"
+            className={({ isActive }) =>
+              `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 ${
+                isActive ? 'bg-white/[0.07] text-white' : 'text-slate-600 hover:text-slate-300 hover:bg-white/[0.04]'
+              }`
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <ShieldCheck size={16} className={isActive ? 'text-violet-400' : ''} />
+                Admin
+              </>
+            )}
+          </NavLink>
+        </div>
+      )}
 
       {/* Footer */}
       <div className="px-3 py-4 space-y-0.5" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
