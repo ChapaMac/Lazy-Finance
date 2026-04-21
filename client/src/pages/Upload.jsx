@@ -18,6 +18,7 @@ const selectCls = 'bg-[#0B0F14] border border-white/[0.08] hover:border-white/[0
 export default function Upload() {
   const { t } = useI18n()
   const [bank, setBank] = useState('')
+  const [yearOverride, setYearOverride] = useState('')
   const [autoDetected, setAutoDetected] = useState(false)
   const [detecting, setDetecting] = useState(false)
   const [file, setFile] = useState(null)
@@ -67,6 +68,7 @@ export default function Upload() {
       const form = new FormData()
       form.append('file', file)
       form.append('bank', bank)
+      if (yearOverride) form.append('yearOverride', yearOverride)
       const res = await api.post('/api/uploads/preview', form)
       setPreview(res.data.transactions)
     } catch (err) {
@@ -182,6 +184,27 @@ export default function Upload() {
               </button>
             ))}
           </div>
+          {/* Year override */}
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-slate-600 text-xs">Año del estado:</span>
+            {[2023, 2024, 2025, 2026].map(y => (
+              <button
+                key={y}
+                onClick={() => setYearOverride(yearOverride === String(y) ? '' : String(y))}
+                className={`px-2.5 py-1 rounded-md text-xs font-mono font-medium transition-all border ${
+                  yearOverride === String(y)
+                    ? 'bg-emerald-500 text-[#0B0F14] border-transparent'
+                    : 'text-slate-500 border-white/[0.06] hover:border-white/[0.15] hover:text-white'
+                }`}
+              >
+                {y}
+              </button>
+            ))}
+            {yearOverride && (
+              <span className="text-xs text-emerald-400">← forzado</span>
+            )}
+          </div>
+
           <div className="flex items-center gap-2 h-4">
             {detecting && (
               <span className="flex items-center gap-1.5 text-xs text-amber-400 animate-pulse">

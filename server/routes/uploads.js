@@ -27,16 +27,16 @@ function makeKey(bank, date, desc, amount) {
     .slice(0, 40)
 }
 
-async function parseFile(buffer, bank, filename) {
+async function parseFile(buffer, bank, filename, yearOverride = null) {
   const ext = filename.split('.').pop().toLowerCase()
   switch (bank) {
     case 'BBVA':
       if (ext === 'csv') return parseBBVACSV(buffer)
-      if (ext === 'pdf') return parseBBVAPDF(buffer)
+      if (ext === 'pdf') return parseBBVAPDF(buffer, yearOverride)
       throw new Error('BBVA soporta PDF y CSV.')
     case 'AMEX':
       if (ext === 'xlsx' || ext === 'xls') return parseAmExXLSX(buffer)
-      if (ext === 'pdf') return parseAmExPDF(buffer)
+      if (ext === 'pdf') return parseAmExPDF(buffer, yearOverride)
       throw new Error('American Express soporta PDF y XLSX.')
     case 'NU':
       if (ext === 'pdf') return parseNuPDF(buffer)
@@ -96,8 +96,10 @@ router.post('/preview', authMiddleware, upload.single('file'), async (req, res) 
   }
   if (!bank) return res.status(422).json({ error: 'No se pudo detectar el banco. Selecciónalo manualmente.' })
 
+  const yearOverride = req.body.yearOverride ? parseInt(req.body.yearOverride) : null
+
   try {
-    const raw = await parseFile(req.file.buffer, bank, req.file.originalname)
+    const raw = await parseFile(req.file.buffer, bank, req.file.originalname, yearOverride)
     const userId = req.user.id
 
     const transactions = raw.map(tx => {

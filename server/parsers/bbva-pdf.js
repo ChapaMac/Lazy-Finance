@@ -45,7 +45,7 @@ function extractInitialSaldo(lines) {
   return null
 }
 
-async function parseBBVAPDF(buffer) {
+async function parseBBVAPDF(buffer, yearOverride = null) {
   let pdfData
   try {
     pdfData = await pdfParse(buffer)
@@ -54,7 +54,7 @@ async function parseBBVAPDF(buffer) {
   }
 
   const text = pdfData.text
-  const year = extractYear(text)
+  const year = yearOverride ? String(yearOverride) : extractYear(text)
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
   const initialSaldo = extractInitialSaldo(lines)
 

@@ -44,7 +44,7 @@ function parseFloat2(str) {
   return parseFloat(String(str).replace(/,/g, ''))
 }
 
-async function parseAmExPDF(buffer) {
+async function parseAmExPDF(buffer, yearOverride = null) {
   let pdfData
   try {
     pdfData = await pdfParse(buffer)
@@ -53,7 +53,7 @@ async function parseAmExPDF(buffer) {
   }
 
   const text = pdfData.text
-  const year = extractYear(text)
+  const year = yearOverride ? String(yearOverride) : extractYear(text)
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
 
   const transactions = []
