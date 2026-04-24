@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
-import { Upload as UploadIcon, FileText, X, CheckCircle, AlertCircle, Info } from 'lucide-react'
+import { Upload as UploadIcon, FileText, X, CheckCircle, AlertCircle, Info, Sparkles } from 'lucide-react'
 import Card from '../components/ui/Card'
 import Badge from '../components/ui/Badge'
 import { formatMXN, formatDate, CATEGORIES, CATEGORY_COLORS } from '../utils/formatters'
@@ -156,31 +156,30 @@ export default function Upload() {
           <span className="text-slate-600 text-xs font-medium uppercase tracking-wider">Banco</span>
           <div className="flex flex-wrap gap-1.5">
             {[
-              { id: 'BBVA',       label: 'BBVA',       color: '#004481', ready: true },
-              { id: 'AMEX',       label: 'AmEx',        color: '#B8972B', ready: true },
-              { id: 'NU',         label: 'Nu',          color: '#820AD1', ready: false },
-              { id: 'SANTANDER',  label: 'Santander',   color: '#EC0000', ready: false },
-              { id: 'BANAMEX',    label: 'Banamex',     color: '#005DAA', ready: false },
-              { id: 'HSBC',       label: 'HSBC',        color: '#DB0011', ready: false },
-              { id: 'BANORTE',    label: 'Banorte',     color: '#E2001A', ready: false },
-              { id: 'SCOTIABANK', label: 'Scotiabank',  color: '#EC111A', ready: false },
+              { id: 'BBVA',       label: 'BBVA',       color: '#004481', ai: false },
+              { id: 'AMEX',       label: 'AmEx',        color: '#B8972B', ai: false },
+              { id: 'NU',         label: 'Nu',          color: '#820AD1', ai: false },
+              { id: 'SANTANDER',  label: 'Santander',   color: '#EC0000', ai: true  },
+              { id: 'BANAMEX',    label: 'Banamex',     color: '#005DAA', ai: true  },
+              { id: 'HSBC',       label: 'HSBC',        color: '#DB0011', ai: true  },
+              { id: 'BANORTE',    label: 'Banorte',     color: '#E2001A', ai: true  },
+              { id: 'SCOTIABANK', label: 'Scotiabank',  color: '#EC111A', ai: true  },
+              { id: 'OTRO',       label: 'Otro banco',  color: '#6366F1', ai: true  },
             ].map(b => (
               <button
                 key={b.id}
-                onClick={() => b.ready && (setBank(b.id), setAutoDetected(false))}
-                title={b.ready ? b.label : 'Próximamente'}
-                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all border ${
+                onClick={() => { setBank(b.id); setAutoDetected(false) }}
+                title={b.ai ? `${b.label} — parser con IA` : b.label}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all border ${
                   bank === b.id
                     ? 'text-[#0B0F14] shadow-sm border-transparent'
-                    : b.ready
-                      ? 'text-slate-400 hover:text-white border-white/[0.06] hover:border-white/[0.15]'
-                      : 'text-slate-700 border-white/[0.04] cursor-not-allowed'
+                    : 'text-slate-400 hover:text-white border-white/[0.06] hover:border-white/[0.15]'
                 }`}
                 style={bank === b.id ? { background: b.color } : {}}
               >
-                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: b.color, opacity: b.ready ? 1 : 0.35 }} />
+                <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: b.color }} />
                 {b.label}
-                {!b.ready && <span className="text-slate-700 text-xs">pronto</span>}
+                {b.ai && <Sparkles size={10} className={bank === b.id ? 'text-black/60' : 'text-indigo-500'} />}
               </button>
             ))}
           </div>
@@ -221,6 +220,12 @@ export default function Upload() {
             {!bank && !detecting && file && (
               <span className="text-xs text-amber-500">Selecciona el banco para continuar</span>
             )}
+            {bank && ['SANTANDER','BANAMEX','HSBC','BANORTE','SCOTIABANK','OTRO'].includes(bank) && !detecting && (
+              <span className="flex items-center gap-1 text-xs text-indigo-400">
+                <Sparkles size={10} />
+                Parser con IA — funciona con cualquier formato PDF
+              </span>
+            )}
           </div>
         </div>
 
@@ -237,9 +242,21 @@ export default function Upload() {
           <button
             onClick={parseFile}
             disabled={parsing}
-            className="mt-4 w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-[#0B0F14] font-semibold py-2.5 rounded-lg text-sm transition-colors"
+            className="mt-4 w-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-60 text-[#0B0F14] font-semibold py-2.5 rounded-lg text-sm transition-colors flex items-center justify-center gap-2"
           >
-            {parsing ? t('upload.parsing') : 'Analizar archivo'}
+            {parsing ? (
+              <>
+                {['SANTANDER','BANAMEX','HSBC','BANORTE','SCOTIABANK','OTRO'].includes(bank)
+                  ? <><Sparkles size={14} className="animate-pulse" /> Analizando con IA...</>
+                  : t('upload.parsing')
+                }
+              </>
+            ) : (
+              <>
+                {['SANTANDER','BANAMEX','HSBC','BANORTE','SCOTIABANK','OTRO'].includes(bank) && <Sparkles size={14} />}
+                Analizar archivo
+              </>
+            )}
           </button>
         )}
 

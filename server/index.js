@@ -3,7 +3,7 @@ const express = require('express')
 const cors = require('cors')
 const path = require('path')
 
-const { initSchema, migrateExpandBankOptions, migrateAddUserId } = require('./db/schema')
+const { initSchema, migrateExpandBankOptions, migrateAddUserId, migrateAddTypeColumn } = require('./db/schema')
 const { seedIfEmpty } = require('./utils/seed')
 const { migrateIncomeCategory, migratePagoTCCategory, migrateTransferenciasCategory, migrateRecategorizeOtros, migrateRecategorizeAll, applyMerchantRules } = require('./db/queries')
 const authRoutes = require('./routes/auth')
@@ -12,6 +12,7 @@ const uploadRoutes = require('./routes/uploads')
 const insightRoutes = require('./routes/insights')
 const budgetRoutes = require('./routes/budgets')
 const adminRoutes = require('./routes/admin')
+const aiRoutes = require('./routes/ai')
 
 const app = express()
 const PORT = process.env.PORT || 3001
@@ -28,6 +29,7 @@ app.use(express.urlencoded({ extended: true }))
 initSchema()
 migrateExpandBankOptions()
 migrateAddUserId()
+migrateAddTypeColumn()        // adds type column + backfills all existing rows
 seedIfEmpty()
 migrateIncomeCategory()
 migratePagoTCCategory()
@@ -43,6 +45,7 @@ app.use('/api/uploads', uploadRoutes)
 app.use('/api/insights', insightRoutes)
 app.use('/api/budgets', budgetRoutes)
 app.use('/api/admin', adminRoutes)
+app.use('/api/ai', aiRoutes)
 app.get('/api/health', (req, res) => res.json({ ok: true, ts: new Date().toISOString() }))
 
 // ── Serve React build in production ──────────────────────────────────────────

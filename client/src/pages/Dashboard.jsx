@@ -1,7 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { TrendingUp, TrendingDown, AlertTriangle, CreditCard, Upload, ArrowDownLeft, ArrowUpRight, FileDown, ChevronLeft, ChevronRight } from 'lucide-react'
-import Card from '../components/ui/Card'
+import {
+  ChevronLeft, ChevronRight, Upload, CreditCard,
+  TrendingUp, TrendingDown, ArrowUpRight, ArrowDownLeft,
+  AlertTriangle, Zap, FileDown, Sparkles, Loader2,
+} from 'lucide-react'
 import DonutChart from '../components/charts/DonutChart'
 import TrendLine from '../components/charts/TrendLine'
 import AnimatedNumber from '../components/ui/AnimatedNumber'
@@ -10,64 +13,72 @@ import { formatMXN, CATEGORY_COLORS } from '../utils/formatters'
 import { useI18n } from '../contexts/I18nContext'
 import api from '../utils/api'
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
-function pctChange(current, prev) {
-  if (!prev) return null
-  return ((current - prev) / prev) * 100
-}
+function pct(a, b) { return b ? ((a - b) / b) * 100 : null }
 
-function DeltaBadge({ value, invert = false }) {
-  if (value === null) return null
-  const positive = invert ? value < 0 : value > 0
-  const color = positive ? '#22C55E' : '#EF4444'
-  const Icon  = positive ? TrendingUp : TrendingDown
+function DeltaChip({ value, invert = false, size = 'sm' }) {
+  if (value === null || value === undefined) return null
+  const good  = invert ? value <= 0 : value >= 0
+  const color = good ? '#34D399' : '#F87171'
+  const Icon  = value >= 0 ? TrendingUp : TrendingDown
+  const cls   = size === 'lg' ? 'text-sm gap-1.5' : 'text-xs gap-1'
   return (
-    <span className="inline-flex items-center gap-1 text-xs font-medium" style={{ color }}>
-      <Icon size={11} />
+    <span className={`inline-flex items-center font-semibold ${cls}`} style={{ color }}>
+      <Icon size={size === 'lg' ? 13 : 10} />
       {Math.abs(value).toFixed(1)}%
     </span>
   )
 }
 
-// ── Insight text generators ───────────────────────────────────────────────────
-
-function expenseInsight(categoryData, budgetMap) {
-  const overBudget = categoryData.filter(c => budgetMap[c.category] && c.total > budgetMap[c.category])
-  if (overBudget.length)
-    return `${overBudget.length} categoría${overBudget.length > 1 ? 's' : ''} sobre presupuesto`
-  if (categoryData[0])
-    return `Mayor gasto: ${categoryData[0].category}`
-  return 'Sin movimientos este mes'
+function projectEndOfMonth(expenses, year, month) {
+  const now = new Date()
+  const isCurrentMonth = now.getFullYear() === year && (now.getMonth() + 1) === month
+  if (!isCurrentMonth) return null
+  const day = now.getDate()
+  const daysInMonth = new Date(year, month, 0).getDate()
+  if (day < 3) return null
+  return Math.round((expenses / day) * daysInMonth)
 }
 
-function incomeInsight(income, expenses) {
-  if (!income) return 'Sin ingresos registrados'
-  const savings = income - expenses
-  const rate = income > 0 ? ((savings / income) * 100).toFixed(0) : 0
-  if (savings >= 0) return `Tasa de ahorro: ${rate}%`
-  return `Déficit del ${Math.abs(rate)}% del ingreso`
+// ── Card primitive ────────────────────────────────────────────────────────────
+
+function Panel({ children, className = '', style = {} }) {
+  return (
+    <div
+      className={`relative rounded-2xl ${className}`}
+      style={{
+        background: '#111827',
+        border: '1px solid rgba(255,255,255,0.06)',
+        ...style,
+      }}
+    >
+      {children}
+    </div>
+  )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
+// ── Main ─────────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
   const { t } = useI18n()
   const navigate = useNavigate()
 
-  const [data, setData]             = useState(null)
-  const [loading, setLoading]       = useState(true)
-  const [error, setError]           = useState(false)
-  const [selectedYear, setSelectedYear]   = useState(new Date().getFullYear())
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1)
-  const [initialized, setInitialized]     = useState(false)
+  const [data, setData]                       = useState(null)
+  const [loading, setLoading]                 = useState(true)
+  const [error, setError]                     = useState(false)
+  const [selectedYear, setSelectedYear]       = useState(new Date().getFullYear())
+  const [selectedMonth, setSelectedMonth]     = useState(new Date().getMonth() + 1)
+  const [initialized, setInitialized]         = useState(false)
+  const [aiSuggestions, setAiSuggestions]     = useState([])
+  const [aiLoading, setAiLoading]             = useState(false)
+  const [recap, setRecap]                     = useState(null)
 
   useEffect(() => {
     api.get('/api/insights/latestMonth').then(res => {
       if (res.data.month) {
         const [y, m] = res.data.month.split('-').map(Number)
-        setSelectedYear(y)
-        setSelectedMonth(m)
+        setSelectedYear(y); setSelectedMonth(m)
       }
       setInitialized(true)
     }).catch(() => setInitialized(true))
@@ -75,21 +86,22 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!initialized) return
-    setLoading(true)
-    setError(false)
+    setLoading(true); setError(false)
+    setAiSuggestions([]); setRecap(null)
     api.get(`/api/insights/dashboard?year=${selectedYear}&month=${selectedMonth}`)
-      .then(res => setData(res.data))
+      .then(res => {
+        setData(res.data)
+        setAiLoading(true)
+        Promise.all([
+          api.get(`/api/ai/suggestions?year=${selectedYear}&month=${selectedMonth}`)
+            .then(r => setAiSuggestions(r.data?.suggestions || [])).catch(() => {}),
+          api.get(`/api/ai/recap?year=${selectedYear}&month=${selectedMonth}`)
+            .then(r => setRecap(r.data?.recap || null)).catch(() => {}),
+        ]).finally(() => setAiLoading(false))
+      })
       .catch(() => setError(true))
       .finally(() => setLoading(false))
   }, [selectedYear, selectedMonth, initialized])
-
-  function fetchData() {
-    setLoading(true); setError(false)
-    api.get(`/api/insights/dashboard?year=${selectedYear}&month=${selectedMonth}`)
-      .then(res => setData(res.data))
-      .catch(() => setError(true))
-      .finally(() => setLoading(false))
-  }
 
   function prevMonth() {
     if (selectedMonth === 1) { setSelectedYear(y => y - 1); setSelectedMonth(12) }
@@ -106,8 +118,8 @@ export default function Dashboard() {
     const monthLabel = new Date(selectedYear, selectedMonth - 1, 1)
       .toLocaleDateString('es-MX', { month: 'long', year: 'numeric' })
       .replace(/^\w/, c => c.toUpperCase())
-    const bg = [11, 15, 20]; const cardC = [15, 23, 42]
-    const green = [34, 197, 94]; const slate = [100, 116, 139]; const white = [229, 231, 235]
+    const bg = [13, 17, 23]; const cardC = [17, 24, 39]
+    const green = [52, 211, 153]; const slate = [100, 116, 139]; const white = [229, 231, 235]
     doc.setFillColor(...bg); doc.rect(0, 0, 210, 297, 'F')
     doc.setFillColor(...cardC); doc.rect(0, 0, 210, 26, 'F')
     doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(...white)
@@ -115,409 +127,694 @@ export default function Dashboard() {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...slate)
     doc.text('Resumen mensual', 14, 19)
     doc.setTextColor(...green); doc.text(monthLabel, 196, 11, { align: 'right' })
-    let y = 36
-    const kpis = [
-      { label: 'Gastos',      value: formatMXN(totalExpenses), color: [239,68,68] },
-      { label: 'Ingresos',    value: formatMXN(totalIncome),   color: [...green] },
-      { label: 'Balance',     value: (netBalance >= 0 ? '+' : '') + formatMXN(Math.abs(netBalance)), color: netBalance >= 0 ? [...green] : [239,68,68] },
-    ]
-    kpis.forEach((k, i) => {
-      const x = 14 + i * 62
-      doc.setFillColor(...cardC); doc.roundedRect(x, y, 58, 20, 2, 2, 'F')
-      doc.setFontSize(7); doc.setFont('helvetica','normal'); doc.setTextColor(...slate)
-      doc.text(k.label.toUpperCase(), x+4, y+6)
-      doc.setFontSize(11); doc.setFont('helvetica','bold'); doc.setTextColor(...k.color)
-      doc.text(k.value, x+4, y+15)
-    })
-    y += 28
-    categoryData.slice(0,10).forEach(cat => {
-      const pct = monthTotal > 0 ? ((cat.total / monthTotal)*100).toFixed(0) : 0
-      const bw  = monthTotal > 0 ? (cat.total / monthTotal) * 110 : 0
-      doc.setFillColor(...cardC); doc.roundedRect(14, y, 182, 8, 1, 1, 'F')
-      doc.setFillColor(...green); if (bw > 0) doc.roundedRect(14, y, bw, 8, 1, 1, 'F')
-      doc.setFontSize(7); doc.setFont('helvetica','normal')
-      doc.setTextColor(...white); doc.text(cat.category, 17, y+5.5)
-      doc.setTextColor(...slate); doc.text(`${formatMXN(cat.total)}  ${pct}%`, 193, y+5.5, { align:'right' })
-      y += 11
-    })
-    data?.topMerchants?.forEach((m, i) => {
-      doc.setFillColor(...cardC); doc.roundedRect(14, y, 182, 8, 1, 1, 'F')
-      doc.setFontSize(7); doc.setFont('helvetica','normal')
-      doc.setTextColor(...slate); doc.text(`${i+1}`, 18, y+5.5)
-      doc.setTextColor(...white); doc.text(m.description.slice(0,55), 26, y+5.5)
-      doc.setTextColor(...green); doc.text(formatMXN(m.total), 193, y+5.5, { align:'right' })
-      y += 11
-    })
-    doc.setFontSize(7); doc.setTextColor(...slate)
-    doc.text(`Lazy Finance · ${new Date().toLocaleDateString('es-MX')}`, 105, 291, { align:'center' })
-    doc.save(`resumen-${selectedYear}-${String(selectedMonth).padStart(2,'0')}.pdf`)
+    doc.save(`resumen-${selectedYear}-${String(selectedMonth).padStart(2, '0')}.pdf`)
   }
 
-  // ── Loading state ───────────────────────────────────────────────────────────
+  // ── Loading ───────────────────────────────────────────────────────────────
   if (loading) return (
     <div className="space-y-5 animate-fade-up">
       <div className="flex items-center justify-between">
-        <Skeleton className="h-7 w-28" />
-        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-7 w-28" /><Skeleton className="h-8 w-48" />
       </div>
-      <SkeletonCard><Skeleton className="h-16 w-56 mb-3" /><Skeleton className="h-4 w-40" /></SkeletonCard>
       <div className="grid grid-cols-3 gap-4">
-        {[0,1,2].map(i => <SkeletonCard key={i}><Skeleton className="h-3 w-16 mb-3" /><Skeleton className="h-6 w-28 mb-2" /><Skeleton className="h-3 w-32" /></SkeletonCard>)}
+        {[1,2,3].map(i => <SkeletonCard key={i}><Skeleton className="h-24 w-full" /></SkeletonCard>)}
       </div>
-      <div className="grid grid-cols-2 gap-5">
-        <SkeletonCard><Skeleton className="h-4 w-32 mb-4" /><Skeleton className="h-48 w-full" /></SkeletonCard>
-        <SkeletonCard><Skeleton className="h-4 w-28 mb-4" /><Skeleton className="h-48 w-full" /></SkeletonCard>
-      </div>
+      <SkeletonCard><Skeleton className="h-32 w-full" /></SkeletonCard>
+      <SkeletonCard><Skeleton className="h-20 w-full" /></SkeletonCard>
     </div>
   )
 
-  // ── Error state ─────────────────────────────────────────────────────────────
   if (error) return (
     <div className="flex flex-col items-center justify-center h-64 gap-4">
       <p className="text-slate-500 text-sm">No se pudo conectar al servidor.</p>
-      <button onClick={fetchData}
-        className="px-4 py-2 bg-green-500 hover:bg-green-400 text-black font-semibold rounded-xl text-sm transition-colors">
+      <button
+        onClick={() => {
+          setLoading(true)
+          api.get(`/api/insights/dashboard?year=${selectedYear}&month=${selectedMonth}`)
+            .then(r => setData(r.data)).catch(() => setError(true)).finally(() => setLoading(false))
+        }}
+        className="px-4 py-2 rounded-xl text-sm font-semibold text-black transition-colors"
+        style={{ background: '#34D399' }}
+      >
         Reintentar
       </button>
     </div>
   )
 
-  // ── Empty state ─────────────────────────────────────────────────────────────
+  // ── Empty ─────────────────────────────────────────────────────────────────
   const isEmpty = !data?.totalExpenses && !data?.categoryBreakdown?.length
-  if (isEmpty) {
-    const emptyMonthLabel = new Date(selectedYear, selectedMonth - 1, 1)
-      .toLocaleDateString('es-MX', { month: 'long', year: 'numeric' })
-    return (
-      <div className="space-y-5">
-        {/* Keep navigation so user isn't trapped */}
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-gray-200">Dashboard</h1>
-          <div className="flex items-center gap-2">
-            <button onClick={prevMonth}
-              className="p-2 rounded-xl text-slate-500 hover:text-gray-300 transition-colors"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <ChevronLeft size={14} />
-            </button>
-            <span className="text-sm text-slate-400 capitalize min-w-32 text-center">{emptyMonthLabel}</span>
-            <button onClick={nextMonth}
-              className="p-2 rounded-xl text-slate-500 hover:text-gray-300 transition-colors"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-              <ChevronRight size={14} />
-            </button>
-          </div>
-        </div>
-        <div className="flex flex-col items-center justify-center h-80 gap-5">
-          <div className="w-14 h-14 rounded-2xl flex items-center justify-center"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <CreditCard size={24} className="text-slate-600" />
-          </div>
-          <div className="text-center">
-            <h2 className="text-gray-200 font-semibold text-base">Sin datos este mes</h2>
-            <p className="text-slate-500 text-sm mt-1">No hay movimientos para {emptyMonthLabel}</p>
-          </div>
-          <button onClick={() => navigate('/upload')}
-            className="flex items-center gap-2 bg-green-500 hover:bg-green-400 text-black font-semibold px-5 py-2.5 rounded-xl text-sm transition-colors">
-            <Upload size={15} />
-            Cargar estado de cuenta
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  // ── Derived values ──────────────────────────────────────────────────────────
-  const totalExpenses  = data?.totalExpenses  || 0
-  const totalIncome    = data?.totalIncome    || 0
-  const netBalance     = totalIncome - totalExpenses
-  const ytd            = data?.yearTotals || { expenses: 0, income: 0, balance: 0 }
-  const prevExpenses   = data?.prevTotalExpenses || 0
-  const prevIncome     = data?.prevTotalIncome   || 0
-  const prevNet        = prevIncome - prevExpenses
-  const netDelta       = pctChange(netBalance, prevNet)
-  const expenseDelta   = pctChange(totalExpenses, prevExpenses)
-  const incomeDelta    = pctChange(totalIncome, prevIncome)
-  const dataMonth      = data?.dataMonth || ''
-  const categoryData   = (data?.categoryBreakdown || []).filter(c => c.category !== 'Ingresos' && c.category !== 'Pago TC')
-  const pagoTC         = data?.pagoTC || { total: 0, count: 0 }
-  const pagoTCTxs      = data?.pagoTCTransactions || []
-  const budgets        = data?.budgets || []
-  const budgetMap      = Object.fromEntries(budgets.map(b => [b.category, b.monthly_limit]))
-  const monthTotal     = categoryData.reduce((s, c) => s + c.total, 0)
-
-  // Alerts
-  const alertCategories = categoryData.filter(c => {
-    if (budgetMap[c.category] != null) return c.total > budgetMap[c.category]
-    return monthTotal > 0 && (c.total / monthTotal) > 0.30
-  })
-
   const monthLabel = new Date(selectedYear, selectedMonth - 1, 1)
     .toLocaleDateString('es-MX', { month: 'long', year: 'numeric' })
 
-  return (
-    <div className="space-y-5 animate-fade-up">
-
-      {/* ── Header ────────────────────────────────────────────────────────── */}
+  if (isEmpty) return (
+    <div className="space-y-6 animate-fade-up">
+      {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold text-gray-200">Dashboard</h1>
-        <div className="flex items-center gap-2">
-          <button onClick={prevMonth}
-            className="p-2 rounded-xl text-slate-500 hover:text-gray-300 transition-colors"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <ChevronLeft size={14} />
-          </button>
-          <span className="text-sm text-slate-400 capitalize min-w-32 text-center">{monthLabel}</span>
-          <button onClick={nextMonth}
-            className="p-2 rounded-xl text-slate-500 hover:text-gray-300 transition-colors"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <ChevronRight size={14} />
-          </button>
-          <button onClick={exportPDF}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs text-slate-500 hover:text-gray-300 transition-all"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-            <FileDown size={13} />
-            PDF
-          </button>
+        <h1 className="text-base font-semibold text-white">Dashboard</h1>
+        <MonthNav
+          monthLabel={monthLabel}
+          onPrev={prevMonth}
+          onNext={nextMonth}
+          onExport={exportPDF}
+        />
+      </div>
+      <div className="flex flex-col items-center justify-center h-80 gap-5">
+        <div
+          className="w-14 h-14 rounded-2xl flex items-center justify-center"
+          style={{ background: 'rgba(52,211,153,0.06)', border: '1px solid rgba(52,211,153,0.12)' }}
+        >
+          <CreditCard size={24} className="text-emerald-600" />
         </div>
+        <div className="text-center">
+          <h2 className="text-white font-semibold text-base">Sin datos este mes</h2>
+          <p className="text-slate-500 text-sm mt-1">No hay movimientos para {monthLabel}</p>
+        </div>
+        <button
+          onClick={() => navigate('/upload')}
+          className="flex items-center gap-2 font-semibold px-5 py-2.5 rounded-xl text-sm transition-all hover:opacity-90 active:scale-[0.98]"
+          style={{ background: '#34D399', color: '#000' }}
+        >
+          <Upload size={15} /> Cargar estado de cuenta
+        </button>
+      </div>
+    </div>
+  )
+
+  // ── Derived data ──────────────────────────────────────────────────────────
+  const totalExpenses = data?.totalExpenses  || 0
+  const totalIncome   = data?.totalIncome    || 0
+  const netBalance    = totalIncome - totalExpenses
+  const ytd           = data?.yearTotals || { expenses: 0, income: 0, balance: 0 }
+  const prevExpenses  = data?.prevTotalExpenses || 0
+  const prevIncome    = data?.prevTotalIncome   || 0
+  const dataMonth     = data?.dataMonth || ''
+  const pagoTC        = data?.pagoTC || { total: 0, count: 0 }
+  const pagoTCTxs     = data?.pagoTCTransactions || []
+  const budgets       = data?.budgets || []
+  const budgetMap     = Object.fromEntries(budgets.map(b => [b.category, b.monthly_limit]))
+
+  const categoryData  = (data?.categoryBreakdown || []).filter(c => c.category !== 'Ingresos' && c.category !== 'Pago TC')
+  const prevCatData   = (data?.prevCategoryBreakdown || []).filter(c => c.category !== 'Ingresos' && c.category !== 'Pago TC')
+  const prevCatMap    = Object.fromEntries(prevCatData.map(c => [c.category, c.total]))
+  const monthTotal    = categoryData.reduce((s, c) => s + c.total, 0)
+
+  const inDeficit     = netBalance < 0
+  const overSpendPct  = totalIncome > 0 ? ((totalExpenses - totalIncome) / totalIncome * 100) : null
+  const savingsRate   = totalIncome > 0 ? ((netBalance / totalIncome) * 100) : null
+  const topCategory   = categoryData[0]
+  const topCatPct     = monthTotal > 0 && topCategory ? (topCategory.total / monthTotal * 100) : 0
+
+  const projected     = projectEndOfMonth(totalExpenses, selectedYear, selectedMonth)
+  const projBalance   = projected !== null ? totalIncome - projected : null
+  const weeklyBudget  = totalIncome > 0 ? Math.round(totalIncome / 4.33) : null
+  const savingFromCut = topCategory ? Math.round(topCategory.total * 0.20) : 0
+
+  const categoryChanges = categoryData.map(c => ({
+    ...c,
+    prev: prevCatMap[c.category] || 0,
+    change: pct(c.total, prevCatMap[c.category] || 0),
+  })).filter(c => c.prev > 0 || c.total > 0)
+
+  const expenseDelta  = pct(totalExpenses, prevExpenses)
+  const incomeDelta   = pct(totalIncome, prevIncome)
+
+  const alertCategories = categoryData.filter(c => {
+    if (budgetMap[c.category] != null) return c.total > budgetMap[c.category]
+    return monthTotal > 0 && (c.total / monthTotal) > 0.35
+  })
+
+  const accentGreen  = '#34D399'
+  const accentRed    = '#F87171'
+  const situationColor  = inDeficit ? accentRed : accentGreen
+  const situationBg     = inDeficit ? 'rgba(248,113,113,0.05)' : 'rgba(52,211,153,0.05)'
+  const situationBorder = inDeficit ? 'rgba(248,113,113,0.14)' : 'rgba(52,211,153,0.14)'
+
+  return (
+    <div className="animate-fade-up space-y-5">
+
+      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-base font-semibold text-white">Resumen</h1>
+          <p className="text-xs text-slate-600 mt-0.5 capitalize">{monthLabel}</p>
+        </div>
+        <MonthNav
+          monthLabel={monthLabel}
+          onPrev={prevMonth}
+          onNext={nextMonth}
+          onExport={exportPDF}
+        />
       </div>
 
-      {/* ── Year-to-date banner ───────────────────────────────────────────── */}
-      <div className="rounded-2xl px-5 py-4 flex items-center gap-6 flex-wrap"
-        style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-widest">
-            {selectedYear} · Acumulado
-          </span>
-        </div>
-        <div className="flex items-center gap-6 flex-wrap">
-          <div>
-            <p className="text-xs text-slate-600 mb-0.5">Gastos</p>
-            <p className="text-base font-bold font-mono text-red-400">{formatMXN(ytd.expenses)}</p>
-          </div>
-          <div className="w-px h-8 bg-white/[0.06]" />
-          <div>
-            <p className="text-xs text-slate-600 mb-0.5">Ingresos</p>
-            <p className="text-base font-bold font-mono text-emerald-400">{formatMXN(ytd.income)}</p>
-          </div>
-          <div className="w-px h-8 bg-white/[0.06]" />
-          <div>
-            <p className="text-xs text-slate-600 mb-0.5">Balance neto</p>
-            <p className="text-base font-bold font-mono" style={{ color: ytd.balance >= 0 ? '#22C55E' : '#EF4444' }}>
-              {ytd.balance >= 0 ? '+' : ''}{formatMXN(ytd.balance)}
-            </p>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Hero KPI ──────────────────────────────────────────────────────── */}
-      <div className="rounded-2xl p-6 relative overflow-hidden"
-        style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.06)' }}>
-        {/* Ambient glow behind number */}
-        <div className="absolute inset-0 pointer-events-none" style={{
-          background: netBalance >= 0
-            ? 'radial-gradient(ellipse 60% 50% at 15% 60%, rgba(34,197,94,0.07) 0%, transparent 70%)'
-            : 'radial-gradient(ellipse 60% 50% at 15% 60%, rgba(239,68,68,0.07) 0%, transparent 70%)',
-        }} />
-
-        <div className="relative flex items-end justify-between gap-6">
-          <div>
-            <p className="text-xs font-medium text-slate-500 uppercase tracking-widest mb-3">
-              Balance neto · {monthLabel}
-            </p>
-            <div className="flex items-baseline gap-3 mb-2">
-              <span className="text-5xl font-bold tracking-tight font-mono"
-                style={{ color: netBalance >= 0 ? '#22C55E' : '#EF4444' }}>
-                <AnimatedNumber
-                  value={Math.abs(netBalance)}
-                  formatter={v => (netBalance < 0 ? '-' : '+') + formatMXN(v)}
-                />
-              </span>
-              {netDelta !== null && (
-                <DeltaBadge value={netDelta} />
-              )}
-            </div>
-            <p className="text-sm text-slate-500">
-              {netBalance >= 0 ? 'Ahorraste este mes' : 'Gastaste más de lo que ingresó'}
-              {netDelta !== null && prevNet !== 0 && (
-                <span className="ml-1">· vs {new Date(selectedYear, selectedMonth - 2, 1).toLocaleDateString('es-MX', { month: 'long' })}</span>
-              )}
-            </p>
-          </div>
-
-          {/* Mini trend */}
-          <div className="hidden md:block w-44 opacity-60">
-            <TrendLine data={data?.trend || []} />
-          </div>
-        </div>
-      </div>
-
-      {/* ── KPI cards ─────────────────────────────────────────────────────── */}
+      {/* ── KPI BAR — 3 hero cards ──────────────────────────────────────────── */}
       <div className="grid grid-cols-3 gap-4">
 
         {/* Gastos */}
-        <div className="rounded-2xl p-5 transition-all duration-200 hover:-translate-y-0.5"
-          style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <button
+          onClick={() => navigate(`/transactions?month=${dataMonth}`)}
+          className="group rounded-2xl p-5 text-left transition-all hover:brightness-110 active:scale-[0.99]"
+          style={{ background: '#111827', border: '1px solid rgba(255,255,255,0.06)' }}
+        >
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Gastos</p>
-            <ArrowUpRight size={14} style={{ color: '#EF4444' }} />
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Gastos</span>
+            <ArrowUpRight size={13} style={{ color: accentRed }} className="opacity-60 group-hover:opacity-100 transition-opacity" />
           </div>
-          <p className="text-2xl font-bold font-mono text-gray-100 mb-1">
+          <p className="text-3xl font-bold font-mono tracking-tight leading-none" style={{ color: accentRed }}>
             <AnimatedNumber value={totalExpenses} formatter={formatMXN} />
           </p>
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{expenseInsight(categoryData, budgetMap)}</p>
-            {expenseDelta !== null && <DeltaBadge value={expenseDelta} invert />}
+          <div className="flex items-center gap-2 mt-2.5">
+            {expenseDelta !== null && <DeltaChip value={expenseDelta} invert />}
+            <span className="text-xs text-slate-700">vs mes ant.</span>
           </div>
-        </div>
+        </button>
 
         {/* Ingresos */}
-        <div className="rounded-2xl p-5 transition-all duration-200 hover:-translate-y-0.5"
-          style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.06)' }}>
+        <button
+          onClick={() => navigate(`/transactions?category=${encodeURIComponent('Ingresos')}&month=${dataMonth}`)}
+          className="group rounded-2xl p-5 text-left transition-all hover:brightness-110 active:scale-[0.99]"
+          style={{ background: '#111827', border: '1px solid rgba(255,255,255,0.06)' }}
+        >
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Ingresos</p>
-            <ArrowDownLeft size={14} style={{ color: '#22C55E' }} />
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">Ingresos</span>
+            <ArrowDownLeft size={13} style={{ color: accentGreen }} className="opacity-60 group-hover:opacity-100 transition-opacity" />
           </div>
-          <p className="text-2xl font-bold font-mono mb-1" style={{ color: '#22C55E' }}>
+          <p className="text-3xl font-bold font-mono tracking-tight leading-none" style={{ color: accentGreen }}>
             <AnimatedNumber value={totalIncome} formatter={formatMXN} />
           </p>
-          <div className="flex items-center justify-between">
-            <p className="text-xs text-slate-500">{incomeInsight(totalIncome, totalExpenses)}</p>
-            {incomeDelta !== null && <DeltaBadge value={incomeDelta} />}
+          <div className="flex items-center gap-2 mt-2.5">
+            {incomeDelta !== null && <DeltaChip value={incomeDelta} />}
+            <span className="text-xs text-slate-700">vs mes ant.</span>
           </div>
-        </div>
+        </button>
 
-        {/* Pago TC */}
-        <div className="rounded-2xl p-5 transition-all duration-200 hover:-translate-y-0.5"
-          style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.06)' }}>
+        {/* Balance / Ahorro */}
+        <button
+          onClick={() => navigate(`/transactions?month=${dataMonth}`)}
+          className="group rounded-2xl p-5 text-left transition-all hover:brightness-110 active:scale-[0.99]"
+          style={{
+            background: situationBg,
+            border: `1px solid ${situationBorder}`,
+          }}
+        >
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs text-slate-500 uppercase tracking-wider">Pago TC</p>
-            <CreditCard size={14} className="text-slate-600" />
+            <span className="text-xs font-medium text-slate-500 uppercase tracking-wider">
+              {inDeficit ? 'Déficit' : 'Ahorro'}
+            </span>
+            <span
+              className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+              style={{
+                background: inDeficit ? 'rgba(248,113,113,0.12)' : 'rgba(52,211,153,0.12)',
+                color: situationColor,
+              }}
+            >
+              {savingsRate !== null ? `${Math.abs(savingsRate).toFixed(0)}%` : '—'}
+            </span>
           </div>
-          <p className="text-2xl font-bold font-mono text-slate-400 mb-1">
-            <AnimatedNumber value={pagoTC.total} formatter={formatMXN} />
+          <p
+            className="text-3xl font-bold font-mono tracking-tight leading-none"
+            style={{ color: situationColor }}
+          >
+            <AnimatedNumber
+              value={Math.abs(netBalance)}
+              formatter={v => (inDeficit ? '-' : '+') + formatMXN(v)}
+            />
           </p>
-          <p className="text-xs text-slate-600">
-            {pagoTC.count > 0 ? `${pagoTC.count} pago${pagoTC.count > 1 ? 's' : ''} · excluido del análisis` : 'Sin pagos a tarjeta'}
-          </p>
-        </div>
+          <div className="mt-2.5">
+            <span className="text-xs text-slate-600">
+              {inDeficit
+                ? `${overSpendPct?.toFixed(0)}% más de lo que entra`
+                : 'del ingreso mensual guardado'}
+            </span>
+          </div>
+        </button>
+
       </div>
 
-      {/* ── Smart Alerts ──────────────────────────────────────────────────── */}
-      {alertCategories.map(cat => {
-        const limit = budgetMap[cat.category]
-        return (
-          <div key={cat.category}
-            className="flex items-center gap-3 rounded-xl px-4 py-3"
-            style={{ background: 'rgba(245,158,11,0.06)', border: '1px solid rgba(245,158,11,0.15)' }}>
-            <AlertTriangle size={14} style={{ color: '#F59E0B', flexShrink: 0 }} />
-            <p className="text-sm" style={{ color: '#FCD34D' }}>
-              {limit != null
-                ? <><strong>{cat.category}</strong> superó el presupuesto — {formatMXN(cat.total)} de {formatMXN(limit)} ({((cat.total / limit) * 100).toFixed(0)}%)</>
-                : <><strong>{cat.category}</strong> representa el {((cat.total / monthTotal) * 100).toFixed(0)}% del gasto total este mes</>
-              }
-            </p>
-          </div>
-        )
-      })}
-
-      {/* ── Charts ────────────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-5">
-        <div className="rounded-2xl p-5" style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="flex items-center justify-between mb-5">
-            <p className="text-sm font-medium text-gray-300">{t('dashboard.spendByCategory')}</p>
-            <button onClick={() => navigate('/transactions')}
-              className="text-xs text-slate-600 hover:text-slate-400 transition-colors">ver todo →</button>
-          </div>
-          <DonutChart
-            data={categoryData}
-            colors={CATEGORY_COLORS}
-            onSliceClick={(category) => navigate(`/transactions?category=${encodeURIComponent(category)}&month=${dataMonth}`)}
-          />
+      {/* ── AI RECAP ───────────────────────────────────────────────────────── */}
+      {(recap || aiLoading) && (
+        <div
+          className="flex items-start gap-3 px-4 py-3 rounded-xl"
+          style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.1)' }}
+        >
+          {aiLoading && !recap
+            ? <Loader2 size={12} className="text-indigo-500 animate-spin flex-shrink-0 mt-0.5" />
+            : <Sparkles size={12} className="text-indigo-400 flex-shrink-0 mt-0.5" />
+          }
+          <p className="text-sm text-slate-300 leading-relaxed">
+            {recap || <span className="text-slate-600 italic">Analizando tu mes...</span>}
+          </p>
         </div>
+      )}
 
-        <div className="rounded-2xl p-5" style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <p className="text-sm font-medium text-gray-300 mb-5">{t('dashboard.monthlyTrend')}</p>
-          <TrendLine data={data?.trend || []} />
-
-          {/* Inline trend insight */}
-          {data?.trend?.length >= 2 && (() => {
-            const trend = data.trend
-            const last  = trend[trend.length - 1]?.total || 0
-            const prev  = trend[trend.length - 2]?.total || 0
-            const delta = pctChange(last, prev)
-            const up    = delta > 0
-            return delta !== null ? (
-              <p className="text-xs mt-4 pt-4" style={{ color: '#94A3B8', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                <span style={{ color: up ? '#EF4444' : '#22C55E' }}>
-                  {up ? '▲' : '▼'} {Math.abs(delta).toFixed(0)}%
-                </span>
-                {' '}vs mes anterior
-              </p>
-            ) : null
-          })()}
-        </div>
-      </div>
-
-      {/* ── Top Merchants ─────────────────────────────────────────────────── */}
-      {data?.topMerchants?.length > 0 && (
-        <div className="rounded-2xl p-5" style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="flex items-center justify-between mb-5">
-            <p className="text-sm font-medium text-gray-300">{t('dashboard.topMerchants')}</p>
-            <p className="text-xs text-slate-600">Top 5 del mes</p>
-          </div>
-          <div className="space-y-3">
-            {data.topMerchants.map((m, i) => {
-              const barW = (m.total / data.topMerchants[0].total) * 100
+      {/* ── SPENDING NUDGES ────────────────────────────────────────────────── */}
+      {categoryChanges.filter(c => c.change !== null && Math.abs(c.change) >= 20 && c.total > 200).length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {categoryChanges
+            .filter(c => c.change !== null && Math.abs(c.change) >= 20 && c.total > 200)
+            .slice(0, 5)
+            .map(c => {
+              const up = c.change > 0
               return (
-                <div key={m.description} className="group">
-                  <div className="flex items-center gap-3 mb-1.5">
-                    <span className="text-xs font-mono text-slate-600 w-4 flex-shrink-0">{i + 1}</span>
-                    <p className="text-sm text-gray-300 flex-1 truncate">{m.description}</p>
-                    <span className="text-sm font-mono font-medium text-gray-200 flex-shrink-0">
-                      {formatMXN(m.total)}
-                    </span>
-                  </div>
-                  <div className="ml-7 h-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                    <div className="h-full rounded-full transition-all duration-700"
-                      style={{
-                        width: `${barW}%`,
-                        background: i === 0 ? '#22C55E' : 'rgba(255,255,255,0.12)',
-                      }} />
-                  </div>
-                </div>
+                <button
+                  key={c.category}
+                  onClick={() => navigate(`/transactions?category=${encodeURIComponent(c.category)}&month=${dataMonth}`)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-all hover:brightness-125 active:scale-95"
+                  style={{
+                    background: up ? 'rgba(248,113,113,0.07)' : 'rgba(52,211,153,0.07)',
+                    border: `1px solid ${up ? 'rgba(248,113,113,0.18)' : 'rgba(52,211,153,0.18)'}`,
+                    color: up ? accentRed : accentGreen,
+                  }}
+                >
+                  {up ? '↑' : '↓'} {c.category} {Math.abs(c.change).toFixed(0)}%
+                </button>
               )
             })}
-          </div>
         </div>
       )}
 
-      {/* ── Pago TC detail ────────────────────────────────────────────────── */}
-      {pagoTC.count > 0 && (
-        <div className="rounded-2xl p-5" style={{ background: '#0F172A', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <CreditCard size={14} className="text-slate-600" />
-              <p className="text-sm font-medium text-gray-300">Pagos a tarjeta de crédito</p>
-            </div>
-            <div className="text-right">
-              <p className="text-sm font-mono font-semibold text-slate-400">{formatMXN(pagoTC.total)}</p>
-              <p className="text-xs text-slate-600">{pagoTC.count} pago{pagoTC.count !== 1 ? 's' : ''} · excluido</p>
-            </div>
-          </div>
-          <div className="space-y-2">
-            {pagoTCTxs.map((tx, i) => (
-              <div key={i} className="flex items-center gap-3 py-2"
-                style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                <span className="text-xs font-mono text-slate-600 w-20 flex-shrink-0">
-                  {tx.date.split('-').reverse().join('/')}
-                </span>
-                <span className="text-sm text-slate-400 flex-1 truncate">{tx.description}</span>
-                <span className="text-sm font-mono text-slate-500 flex-shrink-0">{formatMXN(tx.amount)}</span>
+      {/* ── 2-COLUMN GRID ──────────────────────────────────────────────────── */}
+      <div className="lg:grid lg:grid-cols-[3fr_2fr] lg:gap-5 lg:items-start space-y-5 lg:space-y-0">
+
+        {/* ── LEFT: SITUACIÓN + DECISIÓN + ALERTAS + TENDENCIA ─────────────── */}
+        <div className="space-y-4">
+
+          {/* SITUACIÓN */}
+          <Panel style={{ background: situationBg, border: `1px solid ${situationBorder}` }}>
+            {/* Radial glow */}
+            <div
+              className="absolute inset-0 pointer-events-none rounded-2xl overflow-hidden"
+              style={{
+                background: inDeficit
+                  ? 'radial-gradient(ellipse 70% 50% at 0% 50%, rgba(248,113,113,0.07) 0%, transparent 70%)'
+                  : 'radial-gradient(ellipse 70% 50% at 0% 50%, rgba(52,211,153,0.07) 0%, transparent 70%)',
+              }}
+            />
+            <div className="relative p-6">
+              {/* Status pill */}
+              <div
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold mb-5"
+                style={{
+                  background: inDeficit ? 'rgba(248,113,113,0.12)' : 'rgba(52,211,153,0.12)',
+                  color: situationColor,
+                }}
+              >
+                <span className="w-1.5 h-1.5 rounded-full" style={{ background: situationColor }} />
+                {inDeficit ? 'Déficit este mes' : 'Mes en positivo'}
               </div>
-            ))}
-          </div>
-        </div>
-      )}
 
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p
+                    className="text-5xl font-bold font-mono tracking-tight leading-none mb-3"
+                    style={{ color: situationColor }}
+                  >
+                    <AnimatedNumber
+                      value={Math.abs(netBalance)}
+                      formatter={v => (inDeficit ? '-' : '+') + formatMXN(v)}
+                    />
+                  </p>
+
+                  <div className="space-y-1.5">
+                    {inDeficit && overSpendPct !== null && (
+                      <p className="text-sm text-slate-400">
+                        Gastas{' '}
+                        <span className="font-semibold" style={{ color: accentRed }}>
+                          {overSpendPct.toFixed(0)}% más
+                        </span>{' '}
+                        de lo que ingresa
+                      </p>
+                    )}
+                    {!inDeficit && savingsRate !== null && (
+                      <p className="text-sm text-slate-400">
+                        Ahorraste{' '}
+                        <span className="font-semibold" style={{ color: accentGreen }}>
+                          {savingsRate.toFixed(0)}%
+                        </span>{' '}
+                        de tus ingresos
+                      </p>
+                    )}
+                    {topCategory && (
+                      <button
+                        onClick={() => navigate(`/transactions?category=${encodeURIComponent(topCategory.category)}&month=${dataMonth}`)}
+                        className="text-sm text-slate-500 text-left hover:text-white transition-colors group block mt-2"
+                      >
+                        Mayor gasto:{' '}
+                        <span className="text-slate-300 font-medium group-hover:underline underline-offset-2">
+                          {topCategory.category}
+                        </span>
+                        <span className="text-slate-600"> ({topCatPct.toFixed(0)}%) →</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* YTD */}
+                <button
+                  onClick={() => navigate(`/transactions?month=${selectedYear}-01&year=${selectedYear}`)}
+                  className="flex-shrink-0 text-right hover:opacity-80 transition-opacity group"
+                >
+                  <p className="text-[10px] text-slate-600 uppercase tracking-wider mb-1.5 group-hover:text-slate-400">
+                    {selectedYear} acumulado →
+                  </p>
+                  <p
+                    className="text-sm font-mono font-bold"
+                    style={{ color: ytd.balance >= 0 ? accentGreen : accentRed }}
+                  >
+                    {ytd.balance >= 0 ? '+' : ''}{formatMXN(ytd.balance)}
+                  </p>
+                  <p className="text-[11px] text-slate-600 mt-1 space-x-1">
+                    <span style={{ color: accentRed }}>{formatMXN(ytd.expenses)}</span>
+                    <span>/</span>
+                    <span style={{ color: accentGreen }}>{formatMXN(ytd.income)}</span>
+                  </p>
+                </button>
+              </div>
+            </div>
+          </Panel>
+
+          {/* DECISIÓN */}
+          {(weeklyBudget || projected !== null || aiSuggestions.length > 0 || aiLoading) && (
+            <Panel className="p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  {aiSuggestions.length > 0
+                    ? <><Sparkles size={13} className="text-indigo-400" /><p className="text-sm font-semibold text-white">Qué puedes hacer</p><span className="text-[10px] text-indigo-500/70 ml-1 font-medium uppercase tracking-wider">IA</span></>
+                    : <><Zap size={13} className="text-amber-400" /><p className="text-sm font-semibold text-white">Qué puedes hacer</p></>
+                  }
+                </div>
+                {aiLoading && <Loader2 size={12} className="text-slate-700 animate-spin" />}
+              </div>
+
+              <div className="space-y-2.5">
+                {aiSuggestions.length > 0 ? aiSuggestions.map((s, i) => {
+                  const colorMap = {
+                    amber:  { bg: 'rgba(251,191,36,0.05)',  border: 'rgba(251,191,36,0.11)',  arrow: '#F59E0B' },
+                    green:  { bg: 'rgba(52,211,153,0.05)',  border: 'rgba(52,211,153,0.11)',  arrow: '#34D399' },
+                    red:    { bg: 'rgba(248,113,113,0.05)', border: 'rgba(248,113,113,0.11)', arrow: '#F87171' },
+                    indigo: { bg: 'rgba(99,102,241,0.05)',  border: 'rgba(99,102,241,0.11)',  arrow: '#818CF8' },
+                  }
+                  const colors = colorMap[s.color] || colorMap.amber
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => s.category
+                        ? navigate(`/transactions?category=${encodeURIComponent(s.category)}&month=${dataMonth}`)
+                        : navigate(`/transactions?month=${dataMonth}`)
+                      }
+                      className="w-full flex items-start gap-3 rounded-xl px-4 py-3 text-left hover:brightness-125 transition-all active:scale-[0.98]"
+                      style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
+                    >
+                      <span className="mt-0.5 flex-shrink-0 font-mono text-sm" style={{ color: colors.arrow }}>→</span>
+                      <div>
+                        <p className="text-sm text-slate-300">{s.action}</p>
+                        {s.detail && <p className="text-xs text-slate-600 mt-0.5">{s.detail}</p>}
+                      </div>
+                    </button>
+                  )
+                }) : (
+                  <>
+                    {topCategory && savingFromCut > 0 && (
+                      <button
+                        onClick={() => navigate(`/transactions?category=${encodeURIComponent(topCategory.category)}&month=${dataMonth}`)}
+                        className="w-full flex items-start gap-3 rounded-xl px-4 py-3 text-left hover:brightness-125 transition-all active:scale-[0.98]"
+                        style={{ background: 'rgba(251,191,36,0.05)', border: '1px solid rgba(251,191,36,0.11)' }}
+                      >
+                        <span className="text-amber-400 mt-0.5 flex-shrink-0 font-mono text-sm">→</span>
+                        <div>
+                          <p className="text-sm text-slate-300">
+                            Reduce <span className="text-white font-medium">{topCategory.category}</span> un 20%{' '}
+                            y ahorras{' '}
+                            <span className="font-mono font-semibold" style={{ color: accentGreen }}>{formatMXN(savingFromCut)}</span>
+                          </p>
+                          <p className="text-xs text-slate-600 mt-0.5">
+                            {categoryData.find(c => c.category === topCategory.category)?.count || ''} movimientos →
+                          </p>
+                        </div>
+                      </button>
+                    )}
+                    {weeklyBudget && (
+                      <button
+                        onClick={() => navigate(`/transactions?month=${dataMonth}`)}
+                        className="w-full flex items-start gap-3 rounded-xl px-4 py-3 text-left hover:brightness-125 transition-all active:scale-[0.98]"
+                        style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.11)' }}
+                      >
+                        <span className="text-indigo-400 mt-0.5 flex-shrink-0 font-mono text-sm">→</span>
+                        <div>
+                          <p className="text-sm text-slate-300">
+                            Límite semanal:{' '}
+                            <span className="text-white font-mono font-semibold">{formatMXN(weeklyBudget)}</span>
+                          </p>
+                          <p className="text-xs text-slate-600 mt-0.5">{formatMXN(totalIncome)} ÷ 4.33 semanas</p>
+                        </div>
+                      </button>
+                    )}
+                    {projected !== null && (
+                      <button
+                        onClick={() => navigate(`/transactions?month=${dataMonth}`)}
+                        className="w-full flex items-start gap-3 rounded-xl px-4 py-3 text-left hover:brightness-125 transition-all active:scale-[0.98]"
+                        style={{
+                          background: projBalance !== null && projBalance < 0 ? 'rgba(248,113,113,0.05)' : 'rgba(52,211,153,0.05)',
+                          border: `1px solid ${projBalance !== null && projBalance < 0 ? 'rgba(248,113,113,0.11)' : 'rgba(52,211,153,0.11)'}`,
+                        }}
+                      >
+                        <span
+                          className="mt-0.5 flex-shrink-0 font-mono text-sm"
+                          style={{ color: projBalance !== null && projBalance < 0 ? accentRed : accentGreen }}
+                        >→</span>
+                        <div>
+                          <p className="text-sm text-slate-300">
+                            Proyección fin de mes:{' '}
+                            <span
+                              className="font-mono font-semibold"
+                              style={{ color: projBalance !== null && projBalance < 0 ? accentRed : accentGreen }}
+                            >
+                              {projBalance !== null ? (projBalance >= 0 ? '+' : '') + formatMXN(projBalance) : '...'}
+                            </span>
+                          </p>
+                          <p className="text-xs text-slate-600 mt-0.5">
+                            {formatMXN(totalExpenses)} / {new Date().getDate()} días
+                          </p>
+                        </div>
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </Panel>
+          )}
+
+          {/* ALERTAS */}
+          {alertCategories.map(cat => {
+            const limit = budgetMap[cat.category]
+            const catPct = monthTotal > 0 ? (cat.total / monthTotal * 100).toFixed(0) : 0
+            const prevAmt = prevCatMap[cat.category]
+            const prevTotal = prevCatData.reduce((s, c) => s + c.total, 0)
+            const prevPct = prevAmt && prevTotal > 0 ? (prevAmt / prevTotal * 100).toFixed(0) : null
+            return (
+              <button
+                key={cat.category}
+                onClick={() => navigate(`/transactions?category=${encodeURIComponent(cat.category)}&month=${dataMonth}`)}
+                className="w-full flex items-start gap-3 rounded-xl px-4 py-3.5 text-left hover:brightness-110 transition-all active:scale-[0.99]"
+                style={{ background: 'rgba(248,113,113,0.05)', border: '1px solid rgba(248,113,113,0.15)' }}
+              >
+                <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" style={{ color: '#F87171' }} />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold" style={{ color: '#FCA5A5' }}>
+                    {cat.category} · {catPct}% del gasto total
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {limit != null
+                      ? `Superaste tu límite — ${formatMXN(cat.total)} de ${formatMXN(limit)}`
+                      : prevPct !== null
+                        ? `Antes fue ${prevPct}% — subió ${Math.abs(Number(catPct) - Number(prevPct))} puntos`
+                        : 'Categoría dominante del mes'
+                    }
+                  </p>
+                </div>
+                <span className="text-xs text-slate-600 flex-shrink-0 mt-0.5">ver →</span>
+              </button>
+            )
+          })}
+
+          {/* TENDENCIA */}
+          <Panel className="p-5">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-sm font-medium text-white">Últimos 6 meses</p>
+              {data?.trend?.length >= 2 && (() => {
+                const t2 = data.trend
+                const last  = t2[t2.length - 1]?.total || 0
+                const prev2 = t2[t2.length - 2]?.total || 0
+                const d = pct(last, prev2)
+                const up = d > 0
+                return d !== null ? (
+                  <span className="text-xs font-medium" style={{ color: up ? accentRed : accentGreen }}>
+                    {up ? '▲' : '▼'} {Math.abs(d).toFixed(0)}% vs mes anterior
+                  </span>
+                ) : null
+              })()}
+            </div>
+            <TrendLine data={data?.trend || []} />
+          </Panel>
+
+        </div>{/* end LEFT */}
+
+        {/* ── RIGHT: PATRÓN + DONUT + MERCHANTS + PAGO TC ──────────────────── */}
+        <div className="space-y-4">
+
+          {/* PATRÓN + DONUT */}
+          <div className="grid grid-cols-2 gap-4">
+            <Panel className="p-4">
+              <p className="text-xs font-medium text-slate-400 mb-0.5">¿Dónde se fue?</p>
+              <p className="text-[10px] text-slate-600 mb-3 uppercase tracking-wider">vs mes anterior</p>
+              <div className="space-y-2.5">
+                {categoryChanges.slice(0, 6).map(c => {
+                  const barW = monthTotal > 0 ? (c.total / monthTotal * 100) : 0
+                  const changeColor =
+                    c.change === null ? '#64748B'
+                    : c.change > 10   ? accentRed
+                    : c.change < -10  ? accentGreen
+                    : '#64748B'
+                  return (
+                    <div
+                      key={c.category}
+                      className="cursor-pointer group"
+                      onClick={() => navigate(`/transactions?category=${encodeURIComponent(c.category)}&month=${dataMonth}`)}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        <div
+                          className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                          style={{ background: CATEGORY_COLORS[c.category] || '#6B7280' }}
+                        />
+                        <span className="text-[11px] text-slate-500 flex-1 truncate group-hover:text-white transition-colors">
+                          {c.category}
+                        </span>
+                        {c.change !== null && (
+                          <span className="text-[10px] font-mono font-semibold flex-shrink-0" style={{ color: changeColor }}>
+                            {c.change > 0 ? '↑' : '↓'}{Math.abs(c.change).toFixed(0)}%
+                          </span>
+                        )}
+                      </div>
+                      <div className="h-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                        <div
+                          className="h-full rounded-full transition-all duration-700"
+                          style={{
+                            width: `${Math.min(barW, 100)}%`,
+                            background: CATEGORY_COLORS[c.category] || '#6B7280',
+                            opacity: 0.65,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </Panel>
+
+            <Panel className="p-4">
+              <p className="text-xs font-medium text-slate-400 mb-4">Distribución</p>
+              <DonutChart
+                data={categoryData}
+                colors={CATEGORY_COLORS}
+                onSliceClick={category => navigate(`/transactions?category=${encodeURIComponent(category)}&month=${dataMonth}`)}
+              />
+            </Panel>
+          </div>
+
+          {/* TOP MERCHANTS */}
+          {data?.topMerchants?.length > 0 && (
+            <Panel className="p-4">
+              <p className="text-xs font-medium text-slate-400 mb-3">Top 5 comercios</p>
+              <div className="space-y-2.5">
+                {data.topMerchants.map((m, i) => {
+                  const barW = (m.total / data.topMerchants[0].total) * 100
+                  return (
+                    <div key={m.description}>
+                      <div className="flex items-center gap-2.5 mb-1">
+                        <span className="text-[10px] font-mono text-slate-700 w-3 flex-shrink-0">{i + 1}</span>
+                        <p className="text-xs text-slate-400 flex-1 truncate">{m.description}</p>
+                        <span className="text-xs font-mono font-medium text-slate-300 flex-shrink-0">
+                          {formatMXN(m.total)}
+                        </span>
+                      </div>
+                      <div className="ml-5 h-px rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                        <div
+                          className="h-full rounded-full transition-all duration-700"
+                          style={{
+                            width: `${barW}%`,
+                            background: i === 0 ? accentGreen : 'rgba(255,255,255,0.1)',
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </Panel>
+          )}
+
+          {/* PAGO TC */}
+          {pagoTC.count > 0 && (
+            <Panel className="p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <CreditCard size={12} className="text-slate-600" />
+                  <p className="text-xs font-medium text-slate-400">Pagos tarjeta · excluidos</p>
+                </div>
+                <p className="text-xs font-mono text-slate-500">{formatMXN(pagoTC.total)}</p>
+              </div>
+              <div className="space-y-0">
+                {pagoTCTxs.map((tx, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-3 py-2"
+                    style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}
+                  >
+                    <span className="text-[10px] font-mono text-slate-700 w-16 flex-shrink-0">
+                      {tx.date.split('-').reverse().join('/')}
+                    </span>
+                    <span className="text-xs text-slate-500 flex-1 truncate">{tx.description}</span>
+                    <span className="text-xs font-mono text-slate-600 flex-shrink-0">{formatMXN(tx.amount)}</span>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+          )}
+
+        </div>{/* end RIGHT */}
+      </div>{/* end 2-col */}
+    </div>
+  )
+}
+
+// ── Month Nav component ───────────────────────────────────────────────────────
+
+function MonthNav({ monthLabel, onPrev, onNext, onExport }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <button
+        onClick={onPrev}
+        className="p-1.5 rounded-lg text-slate-600 hover:text-slate-300 transition-colors"
+        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
+      >
+        <ChevronLeft size={14} />
+      </button>
+      <span className="text-xs text-slate-400 capitalize min-w-[7rem] text-center font-medium">
+        {monthLabel}
+      </span>
+      <button
+        onClick={onNext}
+        className="p-1.5 rounded-lg text-slate-600 hover:text-slate-300 transition-colors"
+        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
+      >
+        <ChevronRight size={14} />
+      </button>
+      <button
+        onClick={onExport}
+        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-slate-600 hover:text-slate-300 transition-all"
+        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}
+      >
+        <FileDown size={12} /> PDF
+      </button>
     </div>
   )
 }

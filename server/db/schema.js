@@ -146,4 +146,32 @@ function migrateAddUserId() {
   }
 }
 
-module.exports = { getDb, initSchema, migrateExpandBankOptions, migrateAddUserId }
+// Adds ai_api_key + ai_provider columns to users table (BYOK model)
+function migrateAddAiKey() {
+  const db = getDb()
+  const cols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name)
+  if (!cols.includes('ai_api_key')) {
+    db.exec(`ALTER TABLE users ADD COLUMN ai_api_key TEXT`)
+    db.exec(`ALTER TABLE users ADD COLUMN ai_provider TEXT DEFAULT 'anthropic'`)
+  }
+}
+
+// Adds type column and backfills all existing rows.
+// type = 'expense' | 'income' | 'transfer' | 'credit_payment'
+// This replaces the old fragile category-exclusion approach.
+function migrateAddTypeColumn() {
+  const db = getDb()
+  const cols = db.prepare('PRAGMA table_info(transactions)').all().map(c => c.name)
+  if (cols.includes('type')) return // already done
+
+  db.exec(`ALTER TABLE transactions ADD COLUMN type TEXT NOT NULL DEFAULT 'expense'`)
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_tx_type ON transactions(type)`)
+
+  // Backfill in priority order (most specific first)
+  db.exec(`UPDATE transactions SET type = 'income'         WHERE amount < 0`)
+  db.exec(`UPDATE transactions SET type = 'credit_payment' WHERE amount > 0 AND category = 'Pago TC'`)
+  db.exec(`UPDATE transactions SET type = 'transfer'       WHERE amount > 0 AND category = 'Transferencias'`)
+  // Everything else already defaults to 'expense'
+}
+
+module.exports = { getDb, initSchema, migrateExpandBankOptions, migrateAddUserId, migrateAddTypeColumn }

@@ -14,14 +14,16 @@ const FILENAME_SIGNALS = [
 ]
 
 const CONTENT_SIGNALS = [
-  { pattern: /bbva\s*méxico|banco\s*bilbao|bancomer/i, bank: 'BBVA' },
-  { pattern: /american\s*express|amex\s*méxico/i, bank: 'AMEX' },
-  { pattern: /nu\s*méxico|nu\.com\.mx|nubankapp/i, bank: 'NU' },
-  { pattern: /banco\s*santander\s*méxico|santander\.com\.mx/i, bank: 'SANTANDER' },
+  // BBVA must come first — statements contain "AMERICAN EXPRESS" as merchant name
+  { pattern: /bbva\s*m[eé]xico|banco\s*bilbao|bancomer|grupo\s*financiero\s*bbva|bba830831/i, bank: 'BBVA' },
+  // AmEx: only match when it appears as the issuing bank, not as a merchant payment
+  { pattern: /american\s*express.*estado\s*de\s*cuenta|amex\s*m[eé]xico|americanexpress\.com\.mx/i, bank: 'AMEX' },
+  { pattern: /nu\s*m[eé]xico|nu\.com\.mx|nubankapp/i, bank: 'NU' },
+  { pattern: /banco\s*santander\s*m[eé]xico|santander\.com\.mx/i, bank: 'SANTANDER' },
   { pattern: /citibanamex|banamex\.com/i, bank: 'BANAMEX' },
-  { pattern: /hsbc\s*méxico|hsbc\.com\.mx/i, bank: 'HSBC' },
+  { pattern: /hsbc\s*m[eé]xico|hsbc\.com\.mx/i, bank: 'HSBC' },
   { pattern: /banorte\.com|grupo\s*financiero\s*banorte/i, bank: 'BANORTE' },
-  { pattern: /scotiabank\s*méxico|scotiabank\.com\.mx/i, bank: 'SCOTIABANK' },
+  { pattern: /scotiabank\s*m[eé]xico|scotiabank\.com\.mx/i, bank: 'SCOTIABANK' },
 ]
 
 async function detectBank(buffer, filename) {

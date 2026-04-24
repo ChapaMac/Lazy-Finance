@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Search, Download, ChevronLeft, ChevronRight, Check, X, Plus } from 'lucide-react'
+import { Search, Download, ChevronLeft, ChevronRight, Check, X, Plus, Calendar, Sparkles, Loader2 } from 'lucide-react'
 import { useToast } from '../contexts/ToastContext'
 import { Skeleton } from '../components/ui/Skeleton'
 import Card from '../components/ui/Card'
@@ -20,26 +20,31 @@ export default function Transactions() {
   const [searchParams] = useSearchParams()
 
   const initialCategory = searchParams.get('category') || ''
-  const initialMonth = searchParams.get('month') || ''
-  let initialDateFrom = ''
-  let initialDateTo = ''
-  if (initialMonth) {
-    const [y, m] = initialMonth.split('-').map(Number)
-    initialDateFrom = `${initialMonth}-01`
-    initialDateTo = `${initialMonth}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`
+  const initialMonth = searchParams.get('month') || '' // "YYYY-MM"
+
+  // Parse initialMonth into year/month ints (or default to null = all)
+  const initYear  = initialMonth ? parseInt(initialMonth.split('-')[0]) : null
+  const initMonth = initialMonth ? parseInt(initialMonth.split('-')[1]) : null
+
+  const [selYear,  setSelYear]  = useState(initYear)
+  const [selMonth, setSelMonth] = useState(initMonth)
+
+  // Derive dateFrom/dateTo from selYear+selMonth
+  function monthToDates(y, m) {
+    if (!y || !m) return { dateFrom: '', dateTo: '' }
+    const from = `${y}-${String(m).padStart(2, '0')}-01`
+    const to   = `${y}-${String(m).padStart(2, '0')}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`
+    return { dateFrom: from, dateTo: to }
   }
 
-  const [filters, setFilters] = useState({
-    search: '',
-    bank: '',
-    category: initialCategory,
-    dateFrom: initialDateFrom,
-    dateTo: initialDateTo,
+  const [filters, setFilters] = useState(() => {
+    const { dateFrom, dateTo } = monthToDates(initYear, initMonth)
+    return { search: '', bank: '', category: initialCategory, dateFrom, dateTo }
   })
   const [page, setPage] = useState(0)
   const [sortBy, setSortBy] = useState('date')
   const [sortDir, setSortDir] = useState('desc')
-  const [data, setData] = useState({ transactions: [], total: 0 })
+  const [data, setData] = useState({ transactions: [], total: 0, totals: { expenses: 0, income: 0, net: 0 } })
   const [loading, setLoading] = useState(true)
   const [editingId, setEditingId] = useState(null)
   const [editValues, setEditValues] = useState({})
@@ -47,6 +52,8 @@ export default function Transactions() {
   const [addForm, setAddForm] = useState({ date: new Date().toISOString().slice(0, 10), description: '', amount: '', category: 'Otros', bank: 'Efectivo', notes: '' })
   const [addSaving, setAddSaving] = useState(false)
   const [addError, setAddError] = useState('')
+  const [aiRecatLoading, setAiRecatLoading] = useState(false)
+  const [aiRecatResult, setAiRecatResult] = useState(null)
 
   const fetchData = useCallback(async () => {
     setLoading(true)
@@ -77,6 +84,37 @@ export default function Transactions() {
     setFilters(f => ({ ...f, [key]: val }))
     setPage(0)
   }
+
+  function applyMonth(y, m) {
+    setSelYear(y); setSelMonth(m)
+    const { dateFrom, dateTo } = monthToDates(y, m)
+    setFilters(f => ({ ...f, dateFrom, dateTo }))
+    setPage(0)
+  }
+
+  function clearMonth() {
+    setSelYear(null); setSelMonth(null)
+    setFilters(f => ({ ...f, dateFrom: '', dateTo: '' }))
+    setPage(0)
+  }
+
+  function prevMonth() {
+    const y = selYear || new Date().getFullYear()
+    const m = selMonth || new Date().getMonth() + 1
+    if (m === 1) applyMonth(y - 1, 12)
+    else applyMonth(y, m - 1)
+  }
+
+  function nextMonth() {
+    const y = selYear || new Date().getFullYear()
+    const m = selMonth || new Date().getMonth() + 1
+    if (m === 12) applyMonth(y + 1, 1)
+    else applyMonth(y, m + 1)
+  }
+
+  const monthLabel = selYear && selMonth
+    ? new Date(selYear, selMonth - 1, 1).toLocaleDateString('es-MX', { month: 'long', year: 'numeric' })
+    : null
 
   function toggleSort(col) {
     if (sortBy === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
@@ -141,24 +179,78 @@ export default function Transactions() {
     URL.revokeObjectURL(url)
   }
 
+  async function runAiRecat() {
+    setAiRecatLoading(true)
+    setAiRecatResult(null)
+    try {
+      const res = await api.post('/api/ai/recategorize-all')
+      const { updated = 0, total = 0, message } = res.data
+      setAiRecatResult(message || `${updated} de ${total} recategorizadas`)
+      if (updated > 0) fetchData()
+    } catch (err) {
+      const msg = err.response?.data?.error || 'Error al recategorizar'
+      setAiRecatResult(`Error: ${msg}`)
+    } finally {
+      setAiRecatLoading(false)
+    }
+  }
+
   const totalPages = Math.ceil(data.total / PAGE_SIZE)
 
   return (
     <div className="space-y-5">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-white tracking-tight">{t('transactions.title')}</h1>
+        <h1 className="text-base font-semibold text-white">{t('transactions.title')}</h1>
         <div className="flex items-center gap-2">
+
+          {/* AI Recategorize */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={runAiRecat}
+              disabled={aiRecatLoading}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-50"
+              style={{
+                background: 'rgba(99,102,241,0.08)',
+                border: '1px solid rgba(99,102,241,0.15)',
+                color: '#A5B4FC',
+              }}
+              title="Recategoriza automáticamente las transacciones en 'Otros' usando IA"
+            >
+              {aiRecatLoading
+                ? <Loader2 size={13} className="animate-spin" />
+                : <Sparkles size={13} />
+              }
+              <span>{aiRecatLoading ? 'Analizando...' : 'Recategorizar IA'}</span>
+            </button>
+            {aiRecatResult && (
+              <span
+                className="text-xs px-2.5 py-1 rounded-full font-medium"
+                style={{
+                  background: aiRecatResult.startsWith('Error')
+                    ? 'rgba(248,113,113,0.08)'
+                    : 'rgba(52,211,153,0.08)',
+                  border: `1px solid ${aiRecatResult.startsWith('Error') ? 'rgba(248,113,113,0.15)' : 'rgba(52,211,153,0.15)'}`,
+                  color: aiRecatResult.startsWith('Error') ? '#F87171' : '#34D399',
+                }}
+              >
+                {aiRecatResult}
+              </span>
+            )}
+          </div>
+
           <button
             onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-1.5 bg-emerald-500 hover:bg-emerald-400 text-[#0B0F14] font-semibold px-3 py-2 rounded-lg text-sm transition-colors"
+            className="flex items-center gap-1.5 font-semibold px-3 py-2 rounded-lg text-sm transition-colors"
+            style={{ background: '#34D399', color: '#000' }}
           >
             <Plus size={14} />
             Agregar
           </button>
           <button
             onClick={exportCsv}
-            className="flex items-center gap-1.5 bg-white/[0.04] border border-white/[0.08] hover:border-white/[0.15] text-slate-400 hover:text-white px-3 py-2 rounded-lg text-sm transition-all"
+            className="flex items-center gap-1.5 text-slate-400 hover:text-white px-3 py-2 rounded-lg text-sm transition-all"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
           >
             <Download size={14} />
             {t('transactions.exportCsv')}
@@ -167,9 +259,35 @@ export default function Transactions() {
       </div>
 
       {/* Filters */}
-      <Card className="!p-4">
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="relative md:col-span-1">
+      <Card className="!p-4 space-y-3">
+        {/* Month navigator */}
+        <div className="flex items-center gap-2">
+          <Calendar size={13} className="text-slate-600 flex-shrink-0" />
+          <button onClick={prevMonth}
+            className="p-1.5 rounded-lg text-slate-500 hover:text-white transition-colors"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <ChevronLeft size={13} />
+          </button>
+          <span className="text-sm text-slate-300 capitalize min-w-36 text-center font-medium">
+            {monthLabel || <span className="text-slate-600">Todos los meses</span>}
+          </span>
+          <button onClick={nextMonth}
+            className="p-1.5 rounded-lg text-slate-500 hover:text-white transition-colors"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <ChevronRight size={13} />
+          </button>
+          {monthLabel && (
+            <button onClick={clearMonth}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs text-slate-500 hover:text-white transition-all"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+              <X size={11} /> Todos
+            </button>
+          )}
+        </div>
+
+        {/* Search / bank / category */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div className="relative">
             <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-600" />
             <input
               type="text"
@@ -184,6 +302,7 @@ export default function Transactions() {
             <option value="">{t('transactions.allBanks')}</option>
             <option value="BBVA">BBVA</option>
             <option value="AMEX">AmEx</option>
+            <option value="NU">Nu</option>
             <option value="Efectivo">Efectivo</option>
           </select>
 
@@ -191,11 +310,29 @@ export default function Transactions() {
             <option value="">{t('transactions.allCategories')}</option>
             {CATEGORIES.map(c => <option key={c} value={c}>{t(`category.${c}`)}</option>)}
           </select>
-
-          <input type="date" value={filters.dateFrom} onChange={e => setFilter('dateFrom', e.target.value)} className={inputCls} />
-          <input type="date" value={filters.dateTo} onChange={e => setFilter('dateTo', e.target.value)} className={inputCls} />
         </div>
       </Card>
+
+      {/* Totals bar */}
+      {!loading && data.total > 0 && (() => {
+        const { expenses = 0, income = 0, net = 0 } = data.totals || {}
+        return (
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-xl px-4 py-3 flex flex-col gap-0.5" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.12)' }}>
+              <span className="text-slate-500 text-xs">Gastos</span>
+              <span className="text-red-400 text-lg font-bold font-mono">{formatMXN(expenses)}</span>
+            </div>
+            <div className="rounded-xl px-4 py-3 flex flex-col gap-0.5" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.12)' }}>
+              <span className="text-slate-500 text-xs">Ingresos</span>
+              <span className="text-emerald-400 text-lg font-bold font-mono">{formatMXN(income)}</span>
+            </div>
+            <div className="rounded-xl px-4 py-3 flex flex-col gap-0.5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <span className="text-slate-500 text-xs">Balance</span>
+              <span className="text-lg font-bold font-mono" style={{ color: net <= 0 ? '#22c55e' : '#ef4444' }}>{formatMXN(Math.abs(net))}{net <= 0 ? ' ↑' : ' ↓'}</span>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Table */}
       <Card className="!p-0 overflow-hidden">
@@ -223,7 +360,16 @@ export default function Transactions() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+          <table className="w-full text-sm table-fixed">
+            <colgroup>
+              <col className="w-28" />       {/* Fecha */}
+              <col />                         {/* Descripción — fills remaining */}
+              <col className="w-32" />       {/* Monto */}
+              <col className="w-20" />       {/* Banco */}
+              <col className="w-36" />       {/* Categoría */}
+              <col className="w-36" />       {/* Notas */}
+              <col className="w-16" />       {/* Acciones */}
+            </colgroup>
             <thead>
               <tr style={{ background: 'rgba(255,255,255,0.02)', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                 <th className="text-left px-4 py-3 text-slate-500 font-medium text-xs cursor-pointer hover:text-slate-200 select-none transition-colors" onClick={() => toggleSort('date')}>
@@ -273,7 +419,7 @@ export default function Transactions() {
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                 >
                   <td className="px-4 py-3 text-slate-500 text-xs font-mono whitespace-nowrap">{formatDate(tx.date)}</td>
-                  <td className="px-4 py-3 text-white text-sm max-w-xs">
+                  <td className="px-4 py-3 text-white text-sm overflow-hidden">
                     <span className="truncate block" title={tx.description}>{tx.description}</span>
                   </td>
                   <td className="px-4 py-3 text-right font-mono text-sm">
@@ -302,7 +448,7 @@ export default function Transactions() {
                         value={editValues.notes}
                         onChange={e => setEditValues(v => ({ ...v, notes: e.target.value }))}
                         placeholder="Nota..."
-                        className="bg-[#0B0F14] border border-emerald-500/60 rounded px-2 py-1 text-white text-xs focus:outline-none w-32"
+                        className="bg-[#0B0F14] border border-emerald-500/60 rounded px-2 py-1 text-white text-xs focus:outline-none w-full"
                       />
                     ) : (
                       <span className="text-slate-600 text-xs truncate block max-w-24" title={tx.notes}>{tx.notes || '—'}</span>

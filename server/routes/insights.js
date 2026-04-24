@@ -32,6 +32,7 @@ router.get('/dashboard', (req, res) => {
   res.json({
     totalByBank: getTotalByBank(uid),
     categoryBreakdown: getMonthlySpendByCategory(year, month, uid),
+    prevCategoryBreakdown: getMonthlySpendByCategory(prevYear, prevMonth, uid),
     trend: getLast6MonthsTrend(uid),
     topMerchants: getTopMerchants(year, month, 5, uid),
     totalExpenses: getTotalExpenses(year, month, uid),

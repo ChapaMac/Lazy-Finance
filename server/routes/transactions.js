@@ -1,5 +1,5 @@
 const express = require('express')
-const { getTransactions, countTransactions, getAllForExport, updateTransaction, insertManualTransaction, upsertMerchantRule } = require('../db/queries')
+const { getTransactions, countTransactions, sumTransactions, getAllForExport, updateTransaction, insertManualTransaction, upsertMerchantRule } = require('../db/queries')
 const { authMiddleware } = require('../middleware/auth')
 
 const router = express.Router()
@@ -11,7 +11,8 @@ router.get('/', (req, res) => {
   const filters = { search, bank, category, startDate, endDate, limit: parseInt(limit), offset: parseInt(offset), sortBy, sortDir, userId }
   const transactions = getTransactions(filters)
   const { count } = countTransactions(filters)
-  res.json({ transactions, total: count })
+  const totals = sumTransactions(filters)
+  res.json({ transactions, total: count, totals })
 })
 
 router.get('/export', (req, res) => {

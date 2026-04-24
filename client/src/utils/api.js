@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const api = axios.create({
   baseURL: '/',
-  timeout: 30000,
+  timeout: 120000, // 2 min — AI parser needs more time for large PDFs
 })
 
 api.interceptors.response.use(

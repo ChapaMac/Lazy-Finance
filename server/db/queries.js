@@ -15,14 +15,18 @@ function createUser(username, passwordHash) {
 function insertTransactions(transactions, userId) {
   const insert = getDb().prepare(`
     INSERT OR IGNORE INTO transactions
-      (date, description, amount, currency, bank, category, category_overridden, notes, unique_key, user_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (date, description, amount, currency, bank, category, type, category_overridden, notes, unique_key, user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `)
   const run = getDb().transaction(txs => {
     let inserted = 0, skipped = 0
     for (const tx of txs) {
       const key = `${userId}_${tx.unique_key}`
-      const r = insert.run(tx.date, tx.description, tx.amount, tx.currency || 'MXN', tx.bank, tx.category, tx.category_overridden || 0, tx.notes || null, key, userId)
+      const r = insert.run(
+        tx.date, tx.description, tx.amount, tx.currency || 'MXN',
+        tx.bank, tx.category, tx.type || 'expense',
+        tx.category_overridden || 0, tx.notes || null, key, userId
+      )
       r.changes > 0 ? inserted++ : skipped++
     }
     return { inserted, skipped }
@@ -67,6 +71,34 @@ function countTransactions({ startDate, endDate, bank, category, search, userId 
   return getDb().prepare(q).get(...p)
 }
 
+function sumTransactions({ startDate, endDate, bank, category, search, userId } = {}) {
+  // If filtering by a specific category, show raw amounts for that category
+  // Otherwise, separate by type so transfers/pagoTC don't inflate "Gastos"
+  const useTypeFilter = !category
+  let q
+  if (useTypeFilter) {
+    q = `SELECT
+      COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS expenses,
+      COALESCE(SUM(CASE WHEN type = 'income' THEN ABS(amount) ELSE 0 END), 0) AS income,
+      COALESCE(SUM(CASE WHEN type = 'income' THEN ABS(amount) ELSE 0 END), 0) -
+      COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) AS net
+      FROM transactions WHERE user_id = ?`
+  } else {
+    q = `SELECT
+      COALESCE(SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END), 0) AS expenses,
+      COALESCE(ABS(SUM(CASE WHEN amount < 0 THEN amount ELSE 0 END)), 0) AS income,
+      COALESCE(SUM(amount), 0) AS net
+      FROM transactions WHERE user_id = ?`
+  }
+  const p = [userId]
+  if (startDate) { q += ' AND date >= ?'; p.push(startDate) }
+  if (endDate) { q += ' AND date <= ?'; p.push(endDate) }
+  if (bank) { q += ' AND bank = ?'; p.push(bank) }
+  if (category) { q += ' AND category = ?'; p.push(category) }
+  if (search) { q += ' AND (description LIKE ? OR notes LIKE ?)'; p.push(`%${search}%`, `%${search}%`) }
+  return getDb().prepare(q).get(...p)
+}
+
 function getAllForExport({ startDate, endDate, bank, category, search, userId } = {}) {
   let q = 'SELECT * FROM transactions WHERE user_id = ?'
   const p = [userId]
@@ -79,41 +111,48 @@ function getAllForExport({ startDate, endDate, bank, category, search, userId } 
   return getDb().prepare(q).all(...p)
 }
 
-function insertManualTransaction({ date, description, amount, category, bank, notes, userId }) {
+function insertManualTransaction({ date, description, amount, category, type, bank, notes, userId }) {
+  const { typeForCategory } = require('../utils/categorize')
+  const resolvedType = type || typeForCategory(category, amount)
   const unique_key = `${userId}_MANUAL-${date}-${description.slice(0, 40)}-${amount}-${Date.now()}`
   return getDb().prepare(`
-    INSERT INTO transactions (date, description, amount, currency, bank, category, category_overridden, notes, unique_key, user_id)
-    VALUES (?, ?, ?, 'MXN', ?, ?, 1, ?, ?, ?)
-  `).run(date, description, amount, bank, category, notes || null, unique_key, userId)
+    INSERT INTO transactions (date, description, amount, currency, bank, category, type, category_overridden, notes, unique_key, user_id)
+    VALUES (?, ?, ?, 'MXN', ?, ?, ?, 1, ?, ?, ?)
+  `).run(date, description, amount, bank, category, resolvedType, notes || null, unique_key, userId)
 }
 
 function updateTransaction(id, { category, notes }, userId) {
+  const { typeForCategory } = require('../utils/categorize')
   if (notes !== undefined && category !== undefined) {
-    return getDb().prepare('UPDATE transactions SET category = ?, category_overridden = 1, notes = ? WHERE id = ? AND user_id = ?').run(category, notes, id, userId)
+    const tx = getDb().prepare('SELECT amount FROM transactions WHERE id = ? AND user_id = ?').get(id, userId)
+    const type = typeForCategory(category, tx?.amount)
+    return getDb().prepare('UPDATE transactions SET category = ?, type = ?, category_overridden = 1, notes = ? WHERE id = ? AND user_id = ?').run(category, type, notes, id, userId)
   }
   if (category !== undefined) {
-    return getDb().prepare('UPDATE transactions SET category = ?, category_overridden = 1 WHERE id = ? AND user_id = ?').run(category, id, userId)
+    const tx = getDb().prepare('SELECT amount FROM transactions WHERE id = ? AND user_id = ?').get(id, userId)
+    const type = typeForCategory(category, tx?.amount)
+    return getDb().prepare('UPDATE transactions SET category = ?, type = ?, category_overridden = 1 WHERE id = ? AND user_id = ?').run(category, type, id, userId)
   }
   return getDb().prepare('UPDATE transactions SET notes = ? WHERE id = ? AND user_id = ?').run(notes, id, userId)
 }
 
 // ─── Dashboard / Insights ────────────────────────────────────────────────────
-
-const EXCLUDED = `category NOT IN ('Ingresos', 'Pago TC')`
+// All expense analytics filter on type = 'expense'.
+// This is the single source of truth — no more category exclusion lists.
 
 function getTotalByBank(userId) {
   return getDb().prepare(`
     SELECT bank, SUM(amount) as total FROM transactions
-    WHERE amount > 0 AND ${EXCLUDED} AND user_id = ? GROUP BY bank
+    WHERE type = 'expense' AND user_id = ? GROUP BY bank
   `).all(userId)
 }
 
 function getMonthlySpendByCategory(year, month, userId) {
   const m = `${year}-${String(month).padStart(2, '0')}`
   return getDb().prepare(`
-    SELECT category, SUM(amount) as total
+    SELECT category, SUM(amount) as total, COUNT(*) as count
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ? AND amount > 0 AND ${EXCLUDED} AND user_id = ?
+    WHERE strftime('%Y-%m', date) = ? AND type = 'expense' AND user_id = ?
     GROUP BY category ORDER BY total DESC
   `).all(m, userId)
 }
@@ -122,7 +161,7 @@ function getLast6MonthsTrend(userId) {
   return getDb().prepare(`
     SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
     FROM transactions
-    WHERE amount > 0 AND ${EXCLUDED} AND date >= date('now', '-6 months') AND user_id = ?
+    WHERE type = 'expense' AND date >= date('now', '-6 months') AND user_id = ?
     GROUP BY month ORDER BY month ASC
   `).all(userId)
 }
@@ -132,7 +171,7 @@ function getTopMerchants(year, month, limit = 5, userId) {
   return getDb().prepare(`
     SELECT description, SUM(amount) as total, COUNT(*) as count
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ? AND amount > 0 AND ${EXCLUDED} AND user_id = ?
+    WHERE strftime('%Y-%m', date) = ? AND type = 'expense' AND user_id = ?
     GROUP BY description ORDER BY total DESC LIMIT ?
   `).all(m, userId, limit)
 }
@@ -141,7 +180,7 @@ function getMonthlyByCategoryRange(userId) {
   return getDb().prepare(`
     SELECT strftime('%Y-%m', date) as month, category, SUM(amount) as total
     FROM transactions
-    WHERE amount > 0 AND ${EXCLUDED} AND date >= date('now', '-6 months') AND user_id = ?
+    WHERE type = 'expense' AND date >= date('now', '-6 months') AND user_id = ?
     GROUP BY month, category ORDER BY month ASC
   `).all(userId)
 }
@@ -151,7 +190,7 @@ function getDailySpend(year, month, userId) {
   return getDb().prepare(`
     SELECT date, SUM(amount) as total
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ? AND amount > 0 AND ${EXCLUDED} AND user_id = ?
+    WHERE strftime('%Y-%m', date) = ? AND type = 'expense' AND user_id = ?
     GROUP BY date ORDER BY date ASC
   `).all(m, userId)
 }
@@ -159,14 +198,14 @@ function getDailySpend(year, month, userId) {
 function getAllExpenseTransactions(userId) {
   return getDb().prepare(`
     SELECT id, date, description, amount, category, bank
-    FROM transactions WHERE amount > 0 AND user_id = ? ORDER BY date ASC
+    FROM transactions WHERE type = 'expense' AND user_id = ? ORDER BY date ASC
   `).all(userId)
 }
 
 function getAllMonthlyByCategory(userId) {
   return getDb().prepare(`
     SELECT strftime('%Y-%m', date) as month, category, SUM(amount) as total
-    FROM transactions WHERE amount > 0 AND ${EXCLUDED} AND user_id = ?
+    FROM transactions WHERE type = 'expense' AND user_id = ?
     GROUP BY month, category ORDER BY month ASC
   `).all(userId)
 }
@@ -175,25 +214,37 @@ function getMonthlyExpenseTotals(limitMonths = 6, userId) {
   return getDb().prepare(`
     SELECT strftime('%Y-%m', date) as month, SUM(amount) as total
     FROM transactions
-    WHERE amount > 0 AND ${EXCLUDED} AND date >= date('now', '-${limitMonths} months') AND user_id = ?
+    WHERE type = 'expense' AND date >= date('now', '-${limitMonths} months') AND user_id = ?
     GROUP BY month ORDER BY month DESC
   `).all(userId)
 }
 
 function getTotalExpenses(year, month, userId) {
   const m = `${year}-${String(month).padStart(2, '0')}`
-  return getDb().prepare(`SELECT COALESCE(SUM(amount),0) as total FROM transactions WHERE strftime('%Y-%m', date) = ? AND amount > 0 AND ${EXCLUDED} AND user_id = ?`).get(m, userId)?.total || 0
+  return getDb().prepare(`
+    SELECT COALESCE(SUM(amount),0) as total FROM transactions
+    WHERE strftime('%Y-%m', date) = ? AND type = 'expense' AND user_id = ?
+  `).get(m, userId)?.total || 0
 }
 
 function getTotalIncome(year, month, userId) {
   const m = `${year}-${String(month).padStart(2, '0')}`
-  return getDb().prepare(`SELECT COALESCE(ABS(SUM(amount)),0) as total FROM transactions WHERE strftime('%Y-%m', date) = ? AND amount < 0 AND user_id = ?`).get(m, userId)?.total || 0
+  return getDb().prepare(`
+    SELECT COALESCE(ABS(SUM(amount)),0) as total FROM transactions
+    WHERE strftime('%Y-%m', date) = ? AND type = 'income' AND user_id = ?
+  `).get(m, userId)?.total || 0
 }
 
 function getYearTotals(year, userId) {
   const y = String(year)
-  const expenses = getDb().prepare(`SELECT COALESCE(SUM(amount),0) as total FROM transactions WHERE strftime('%Y', date) = ? AND amount > 0 AND ${EXCLUDED} AND user_id = ?`).get(y, userId)?.total || 0
-  const income   = getDb().prepare(`SELECT COALESCE(ABS(SUM(amount)),0) as total FROM transactions WHERE strftime('%Y', date) = ? AND amount < 0 AND user_id = ?`).get(y, userId)?.total || 0
+  const expenses = getDb().prepare(`
+    SELECT COALESCE(SUM(amount),0) as total FROM transactions
+    WHERE strftime('%Y', date) = ? AND type = 'expense' AND user_id = ?
+  `).get(y, userId)?.total || 0
+  const income = getDb().prepare(`
+    SELECT COALESCE(ABS(SUM(amount)),0) as total FROM transactions
+    WHERE strftime('%Y', date) = ? AND type = 'income' AND user_id = ?
+  `).get(y, userId)?.total || 0
   return { expenses, income, balance: income - expenses }
 }
 
@@ -202,7 +253,7 @@ function getPagoTCTransactions(year, month, userId) {
   return getDb().prepare(`
     SELECT date, description, amount
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ? AND category = 'Pago TC' AND amount > 0 AND user_id = ?
+    WHERE strftime('%Y-%m', date) = ? AND type = 'credit_payment' AND user_id = ?
     ORDER BY date DESC
   `).all(m, userId)
 }
@@ -212,14 +263,15 @@ function getPagoTCTotal(year, month, userId) {
   return getDb().prepare(`
     SELECT COALESCE(SUM(amount), 0) as total, COUNT(*) as count
     FROM transactions
-    WHERE strftime('%Y-%m', date) = ? AND category = 'Pago TC' AND amount > 0 AND user_id = ?
+    WHERE strftime('%Y-%m', date) = ? AND type = 'credit_payment' AND user_id = ?
   `).get(m, userId) || { total: 0, count: 0 }
 }
 
 function getLatestDataMonth(userId) {
+  // Latest month that has actual expense activity
   const row = getDb().prepare(`
     SELECT strftime('%Y-%m', date) as month FROM transactions
-    WHERE amount > 0 AND user_id = ? ORDER BY date DESC LIMIT 1
+    WHERE type = 'expense' AND user_id = ? ORDER BY date DESC LIMIT 1
   `).get(userId)
   return row?.month || null
 }
@@ -237,15 +289,25 @@ function migrateIncomeCategory() {
 function migrateRecategorizeOtros() {
   const { categorize } = require('../utils/categorize')
   const rows = getDb().prepare(`SELECT id, description, amount FROM transactions WHERE category = 'Otros' AND category_overridden = 0`).all()
-  const update = getDb().prepare(`UPDATE transactions SET category = ? WHERE id = ?`)
-  getDb().transaction(() => { for (const r of rows) { const c = categorize(r.description, r.amount); if (c !== 'Otros') update.run(c, r.id) } })()
+  const update = getDb().prepare(`UPDATE transactions SET category = ?, type = ? WHERE id = ?`)
+  getDb().transaction(() => {
+    for (const r of rows) {
+      const { category, type } = categorize(r.description, r.amount)
+      if (category !== 'Otros') update.run(category, type, r.id)
+    }
+  })()
 }
 
 function migrateRecategorizeAll() {
   const { categorize } = require('../utils/categorize')
   const rows = getDb().prepare(`SELECT id, description, amount, category FROM transactions WHERE category_overridden = 0`).all()
-  const update = getDb().prepare(`UPDATE transactions SET category = ? WHERE id = ?`)
-  getDb().transaction(() => { for (const r of rows) { const c = categorize(r.description, r.amount); if (c !== r.category) update.run(c, r.id) } })()
+  const update = getDb().prepare(`UPDATE transactions SET category = ?, type = ? WHERE id = ?`)
+  getDb().transaction(() => {
+    for (const r of rows) {
+      const { category, type } = categorize(r.description, r.amount)
+      if (category !== r.category) update.run(category, type, r.id)
+    }
+  })()
 }
 
 function migrateTransferenciasCategory() {
@@ -279,16 +341,19 @@ function extractPattern(description) {
 }
 
 function upsertMerchantRule(description, category, userId) {
+  const { typeForCategory } = require('../utils/categorize')
   const pattern = extractPattern(description)
   if (!pattern) return
   getDb().prepare(`
     INSERT INTO merchant_rules (pattern, category, user_id) VALUES (?, ?, ?)
     ON CONFLICT(user_id, pattern) DO UPDATE SET category = excluded.category, updated_at = CURRENT_TIMESTAMP
   `).run(pattern, category, userId)
+  // Derive type from the new category so analytics stay correct
+  const type = typeForCategory(category)
   getDb().prepare(`
-    UPDATE transactions SET category = ?
+    UPDATE transactions SET category = ?, type = ?
     WHERE UPPER(description) LIKE ? AND category_overridden = 0 AND user_id = ?
-  `).run(category, `${pattern}%`, userId)
+  `).run(category, type, `${pattern}%`, userId)
 }
 
 function getMerchantRules(userId) {
@@ -296,11 +361,13 @@ function getMerchantRules(userId) {
 }
 
 function applyMerchantRules(userId) {
+  const { typeForCategory } = require('../utils/categorize')
   const rules = userId ? getMerchantRules(userId) : getDb().prepare('SELECT pattern, category, user_id FROM merchant_rules').all()
-  const update = getDb().prepare(`UPDATE transactions SET category = ? WHERE UPPER(description) LIKE ? AND category_overridden = 0 AND user_id = ?`)
+  const update = getDb().prepare(`UPDATE transactions SET category = ?, type = ? WHERE UPPER(description) LIKE ? AND category_overridden = 0 AND user_id = ?`)
   getDb().transaction(() => {
     for (const rule of rules) {
-      update.run(rule.category, `${rule.pattern}%`, rule.user_id ?? userId)
+      const type = typeForCategory(rule.category)
+      update.run(rule.category, type, `${rule.pattern}%`, rule.user_id ?? userId)
     }
   })()
 }
@@ -325,7 +392,7 @@ function deleteBudget(category, userId) {
 module.exports = {
   getUserByUsername, createUser,
   insertTransactions, getExistingKeys, insertManualTransaction,
-  getTransactions, countTransactions, getAllForExport, updateTransaction,
+  getTransactions, countTransactions, sumTransactions, getAllForExport, updateTransaction,
   getTotalByBank, getMonthlySpendByCategory, getLast6MonthsTrend,
   getTopMerchants, getMonthlyByCategoryRange, getDailySpend,
   getTotalExpenses, getTotalIncome, getYearTotals, getPagoTCTransactions, getPagoTCTotal,

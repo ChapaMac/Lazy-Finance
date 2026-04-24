@@ -19,9 +19,23 @@ const STOPWORDS = [
   'WEB', 'COM MX', 'COM', 'MX', 'SIN TARJETA QR',
 ]
 
+// BBVA PDFs concatenate words when columns are adjacent — fix known patterns
+// e.g. "SPEI RECIBIDOSANTANDER" → "SPEI RECIBIDO SANTANDER"
+const CONCAT_FIXES = [
+  // SPEI verbs glued to next word
+  [/(RECIBIDO|ENVIADO|DEPOSITADO|REALIZADO)([A-ZÁÉÍÓÚÑ])/g, '$1 $2'],
+  // Known bank names that appear concatenated
+  [/([A-Z])(SANTANDER|BANORTE|BANREGIO|BANAMEX|BANCOMER|BANCOPPEL|SCOTIABANK|INBURSA|AFIRME|BANBAJIO|HSBC|NUBANK|CITI|CITIBANAMEX)(?=[^A-Z]|$)/g, '$1 $2'],
+  // "PAGOBC" → "PAGO BC", "PAGOCARD" → "PAGO CARD" etc.
+  [/(PAGO)(DE|TC|TDC|CARD|NOMINA|CUENTA)([A-Z])/g, '$1 $2 $3'],
+]
+
 function cleanMerchant(raw) {
   if (!raw) return 'DESCONOCIDO'
   let name = String(raw).toUpperCase().trim()
+
+  // Fix BBVA concatenation artifacts before other processing
+  for (const [re, repl] of CONCAT_FIXES) name = name.replace(re, repl)
 
   // Strip leftover RFC codes (parser should catch these but just in case)
   name = name.replace(/\bRFC[A-Z0-9]{10,13}\b/g, '')

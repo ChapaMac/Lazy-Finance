@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Users, Activity, Trash2 } from 'lucide-react'
+import { Users, Activity, Trash2, CalendarX, AlertTriangle, Sparkles, Loader2 } from 'lucide-react'
 import Card from '../components/ui/Card'
 import { Skeleton } from '../components/ui/Skeleton'
 import api from '../utils/api'
@@ -15,17 +15,43 @@ function stat(label, value, sub) {
 }
 
 export default function Admin() {
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const [fixing, setFixing] = useState(false)
-  const [fixResult, setFixResult] = useState(null)
+  const [data, setData]           = useState(null)
+  const [loading, setLoading]     = useState(true)
+  const [error, setError]         = useState('')
 
-  useEffect(() => {
+  // months state
+  const [months, setMonths]       = useState([])
+  const [loadingMonths, setLoadingMonths] = useState(false)
+  const [clearingMonth, setClearingMonth] = useState(null)
+  const [clearedResult, setClearedResult] = useState({}) // { 'YYYY-MM': count }
+
+  // wipe all state
+  const [wiping, setWiping]       = useState(false)
+  const [wipeResult, setWipeResult] = useState(null)
+  const [wipeConfirm, setWipeConfirm] = useState(false)
+
+  // AI recategorize state
+  const [aiRecatLoading, setAiRecatLoading] = useState(false)
+  const [aiRecatResult, setAiRecatResult]   = useState(null)
+
+  const loadData = () => {
+    setLoading(true)
     api.get('/api/admin/users')
       .then(res => setData(res.data))
       .catch(() => setError('Sin acceso o error al cargar.'))
       .finally(() => setLoading(false))
+  }
+
+  const loadMonths = () => {
+    setLoadingMonths(true)
+    api.get('/api/admin/months')
+      .then(res => setMonths(res.data.months || []))
+      .finally(() => setLoadingMonths(false))
+  }
+
+  useEffect(() => {
+    loadData()
+    loadMonths()
   }, [])
 
   if (error) return (
@@ -34,14 +60,50 @@ export default function Admin() {
     </div>
   )
 
-  async function fixDec2026() {
-    if (!confirm('¿Borrar todas las transacciones con fecha diciembre 2026 (año incorrecto)?')) return
-    setFixing(true)
+  async function clearMonth(ym) {
+    if (!confirm(`¿Borrar TODAS las transacciones de ${ym}?`)) return
+    setClearingMonth(ym)
     try {
-      const res = await api.delete('/api/admin/fix-dec-2026')
-      setFixResult(res.data.deleted)
-    } catch { setFixResult('Error') }
-    finally { setFixing(false) }
+      const res = await api.delete('/api/admin/clear-month', { data: { month: ym } })
+      setClearedResult(prev => ({ ...prev, [ym]: res.data.deleted }))
+      setMonths(prev => prev.filter(m => m.ym !== ym))
+      loadData() // refresh stats
+    } catch {
+      alert('Error al borrar el mes')
+    } finally {
+      setClearingMonth(null)
+    }
+  }
+
+  async function wipeAll() {
+    setWiping(true)
+    try {
+      const res = await api.delete('/api/admin/wipe-all')
+      setWipeResult(res.data.deleted)
+      setMonths([])
+      setWipeConfirm(false)
+      loadData()
+    } catch {
+      alert('Error al borrar')
+    } finally {
+      setWiping(false)
+    }
+  }
+
+  async function aiRecategorize() {
+    if (!confirm('¿Re-categorizar todas las transacciones en "Otros" con IA? Esto puede tardar unos segundos.')) return
+    setAiRecatLoading(true)
+    setAiRecatResult(null)
+    try {
+      const res = await api.post('/api/ai/recategorize-all')
+      setAiRecatResult(res.data)
+      loadData()
+      loadMonths()
+    } catch {
+      alert('Error al re-categorizar')
+    } finally {
+      setAiRecatLoading(false)
+    }
   }
 
   const users = data?.users || []
@@ -57,18 +119,6 @@ export default function Admin() {
         <h1 className="text-2xl font-bold text-white tracking-tight">Admin</h1>
       </div>
 
-      {/* One-time fix */}
-      <div className="flex items-center gap-4 rounded-xl px-4 py-3" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
-        <Trash2 size={14} className="text-red-400 flex-shrink-0" />
-        <p className="text-slate-400 text-sm flex-1">Borrar transacciones con fecha <span className="text-white font-mono">diciembre 2026</span> (año detectado incorrectamente)</p>
-        {fixResult !== null
-          ? <span className="text-emerald-400 text-sm font-mono">{fixResult} borradas ✓</span>
-          : <button onClick={fixDec2026} disabled={fixing} className="px-3 py-1.5 rounded-lg text-sm font-medium text-red-400 transition-all disabled:opacity-50" style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)' }}>
-              {fixing ? 'Borrando...' : 'Borrar ahora'}
-            </button>
-        }
-      </div>
-
       {/* Summary stats */}
       <div className="grid grid-cols-3 gap-3">
         {loading ? (
@@ -79,6 +129,119 @@ export default function Admin() {
             {stat('Con movimientos', activeUsers, `${users.length - activeUsers} sin actividad`)}
             {stat('Total movimientos', totalTx.toLocaleString())}
           </>
+        )}
+      </div>
+
+      {/* ── Clear by month ──────────────────────────────────────────────── */}
+      <Card>
+        <div className="flex items-center gap-2 mb-4">
+          <CalendarX size={14} className="text-amber-400" />
+          <p className="text-white text-sm font-medium">Borrar por mes</p>
+          <span className="text-slate-600 text-xs">— selecciona el mes que quieres eliminar</span>
+        </div>
+
+        {loadingMonths ? (
+          <div className="flex flex-wrap gap-2">
+            {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-8 w-24 rounded-lg" />)}
+          </div>
+        ) : months.length === 0 ? (
+          <p className="text-slate-600 text-sm">No hay transacciones guardadas.</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {months.map(m => {
+              const done = clearedResult[m.ym] !== undefined
+              const clearing = clearingMonth === m.ym
+              return (
+                <button
+                  key={m.ym}
+                  onClick={() => !done && clearMonth(m.ym)}
+                  disabled={clearing || done}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-mono transition-all disabled:cursor-not-allowed"
+                  style={{
+                    background: done
+                      ? 'rgba(34,197,94,0.08)'
+                      : 'rgba(251,191,36,0.08)',
+                    border: `1px solid ${done ? 'rgba(34,197,94,0.2)' : 'rgba(251,191,36,0.2)'}`,
+                    color: done ? '#4ade80' : '#fbbf24',
+                    opacity: clearing ? 0.5 : 1,
+                  }}
+                >
+                  {done
+                    ? `${m.ym} ✓ ${clearedResult[m.ym]} borradas`
+                    : clearing
+                    ? `${m.ym}...`
+                    : <><Trash2 size={10} />{m.ym} <span style={{ color: 'rgba(255,255,255,0.25)' }}>({m.count})</span></>
+                  }
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </Card>
+
+      {/* ── AI Re-categorize ────────────────────────────────────────────── */}
+      <div className="rounded-xl px-4 py-4 space-y-3" style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)' }}>
+        <div className="flex items-center gap-2">
+          <Sparkles size={14} className="text-indigo-400" />
+          <p className="text-white text-sm font-medium">Re-categorizar con IA</p>
+          <span className="text-slate-600 text-xs">— clasifica todas las transacciones en "Otros" usando Claude</span>
+        </div>
+        {aiRecatResult ? (
+          <p className="text-emerald-400 text-sm font-mono">
+            {aiRecatResult.updated} de {aiRecatResult.total} transacciones re-categorizadas ✓
+          </p>
+        ) : (
+          <button
+            onClick={aiRecategorize}
+            disabled={aiRecatLoading}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium text-indigo-300 transition-all disabled:opacity-50"
+            style={{ background: 'rgba(99,102,241,0.12)', border: '1px solid rgba(99,102,241,0.25)' }}
+          >
+            {aiRecatLoading
+              ? <><Loader2 size={13} className="animate-spin" /> Procesando...</>
+              : <><Sparkles size={13} /> Re-categorizar Otros con IA</>
+            }
+          </button>
+        )}
+      </div>
+
+      {/* ── Wipe ALL ────────────────────────────────────────────────────── */}
+      <div className="rounded-xl px-4 py-4 space-y-3" style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)' }}>
+        <div className="flex items-center gap-2">
+          <AlertTriangle size={14} className="text-red-400" />
+          <p className="text-white text-sm font-medium">Borrar todo</p>
+          <span className="text-slate-600 text-xs">— elimina TODAS las transacciones de todos los usuarios</span>
+        </div>
+
+        {wipeResult !== null ? (
+          <p className="text-emerald-400 text-sm font-mono">{wipeResult} transacciones eliminadas ✓ — sube los estados de cuenta de nuevo.</p>
+        ) : !wipeConfirm ? (
+          <button
+            onClick={() => setWipeConfirm(true)}
+            className="px-3 py-1.5 rounded-lg text-sm font-medium text-red-400 transition-all"
+            style={{ background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.25)' }}
+          >
+            Borrar todo ahora
+          </button>
+        ) : (
+          <div className="flex items-center gap-3">
+            <p className="text-red-300 text-sm">¿Seguro? Esto no se puede deshacer.</p>
+            <button
+              onClick={wipeAll}
+              disabled={wiping}
+              className="px-3 py-1.5 rounded-lg text-sm font-bold text-white disabled:opacity-50"
+              style={{ background: 'rgba(239,68,68,0.5)', border: '1px solid rgba(239,68,68,0.6)' }}
+            >
+              {wiping ? 'Borrando...' : 'Sí, borrar todo'}
+            </button>
+            <button
+              onClick={() => setWipeConfirm(false)}
+              className="px-3 py-1.5 rounded-lg text-sm text-slate-400"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              Cancelar
+            </button>
+          </div>
         )}
       </div>
 

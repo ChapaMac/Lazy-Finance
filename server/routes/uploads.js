@@ -1,21 +1,20 @@
 const express = require('express')
 const multer = require('multer')
 const crypto = require('crypto')
+const Anthropic = require('@anthropic-ai/sdk')
 const { parseBBVAPDF } = require('../parsers/bbva-pdf')
 const { parseBBVACSV } = require('../parsers/bbva-csv')
 const { parseAmExPDF } = require('../parsers/amex-pdf')
 const { parseAmExXLSX } = require('../parsers/amex-xlsx')
 const { parseNuPDF } = require('../parsers/nu-pdf')
-const { parseSantanderPDF } = require('../parsers/santander-pdf')
-const { parseBanamexPDF } = require('../parsers/banamex-pdf')
-const { parseHSBCPDF } = require('../parsers/hsbc-pdf')
-const { parseBanortePDF } = require('../parsers/banorte-pdf')
-const { parseScotiabankPDF } = require('../parsers/scotiabank-pdf')
 const { detectBank } = require('../parsers/detect-bank')
-const { categorize } = require('../utils/categorize')
+const { categorize, typeForCategory } = require('../utils/categorize')
 const { cleanMerchant } = require('../pipeline/clean')
 const { insertTransactions, getExistingKeys, getMerchantRules } = require('../db/queries')
 const { authMiddleware } = require('../middleware/auth')
+
+// Banks that use the AI parser instead of custom parsers
+const AI_BANKS = new Set(['SANTANDER', 'BANAMEX', 'HSBC', 'BANORTE', 'SCOTIABANK', 'OTRO'])
 
 const router = express.Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } })
@@ -41,24 +40,60 @@ async function parseFile(buffer, bank, filename, yearOverride = null) {
     case 'NU':
       if (ext === 'pdf') return parseNuPDF(buffer)
       throw new Error('Nu soporta PDF.')
-    case 'SANTANDER':
-      if (ext === 'pdf') return parseSantanderPDF(buffer)
-      throw new Error('Santander soporta PDF.')
-    case 'BANAMEX':
-      if (ext === 'pdf') return parseBanamexPDF(buffer)
-      throw new Error('Banamex soporta PDF.')
-    case 'HSBC':
-      if (ext === 'pdf') return parseHSBCPDF(buffer)
-      throw new Error('HSBC soporta PDF.')
-    case 'BANORTE':
-      if (ext === 'pdf') return parseBanortePDF(buffer)
-      throw new Error('Banorte soporta PDF.')
-    case 'SCOTIABANK':
-      if (ext === 'pdf') return parseScotiabankPDF(buffer)
-      throw new Error('Scotiabank soporta PDF.')
     default:
       throw new Error(`Banco "${bank}" no reconocido.`)
   }
+}
+
+// ─── AI Universal Parser ──────────────────────────────────────────────────────
+async function parseWithAI(buffer, bankName) {
+  const pdfParse = require('pdf-parse')
+  const data = await pdfParse(buffer)
+  const text = data.text.slice(0, 12000) // ~3k tokens, enough for most statements
+
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+
+  const prompt = `Eres un extractor de transacciones bancarias. Analiza este estado de cuenta de ${bankName} y extrae TODAS las transacciones.
+
+TEXTO DEL ESTADO DE CUENTA:
+${text}
+
+INSTRUCCIONES:
+- Extrae cada cargo y abono
+- Cargos (gastos): amount POSITIVO
+- Abonos (ingresos, pagos recibidos): amount NEGATIVO
+- Formato de fecha: YYYY-MM-DD (si el año no aparece, usa el año más común en el documento)
+- Limpia la descripción: quita números de referencia, deja solo el nombre del comercio
+- Ignora: saldo inicial, saldo final, totales, encabezados
+
+Responde SOLO con JSON válido, sin texto extra:
+{
+  "transactions": [
+    { "date": "2025-03-15", "description": "OXXO REFORMA", "amount": 85.50 },
+    { "date": "2025-03-14", "description": "NOMINA EMPRESA SA", "amount": -18000.00 }
+  ]
+}`
+
+  const response = await client.messages.create({
+    model: 'claude-haiku-4-5',
+    max_tokens: 4096,
+    messages: [{ role: 'user', content: prompt }],
+  })
+
+  const raw = response.content[0]?.text?.trim() || '{}'
+  const jsonMatch = raw.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) throw new Error('La IA no pudo extraer transacciones del PDF.')
+
+  const parsed = JSON.parse(jsonMatch[0])
+  const txs = parsed.transactions || []
+
+  if (!txs.length) throw new Error('No se encontraron transacciones en el PDF. Verifica que sea un estado de cuenta.')
+
+  return txs.map(tx => ({
+    date: tx.date,
+    description: String(tx.description).trim(),
+    amount: Number(tx.amount),
+  }))
 }
 
 function applyLearnedRules(description, category, userId) {
@@ -99,19 +134,25 @@ router.post('/preview', authMiddleware, upload.single('file'), async (req, res) 
   const yearOverride = req.body.yearOverride ? parseInt(req.body.yearOverride) : null
 
   try {
-    const raw = await parseFile(req.file.buffer, bank, req.file.originalname, yearOverride)
+    // Route to AI parser for banks without custom parsers
+    const raw = AI_BANKS.has(bank)
+      ? await parseWithAI(req.file.buffer, bank)
+      : await parseFile(req.file.buffer, bank, req.file.originalname, yearOverride)
     const userId = req.user.id
 
     const transactions = raw.map(tx => {
       const description = cleanMerchant(tx.description)
-      const baseCategory = categorize(description, tx.amount)
+      const { category: baseCategory, type: baseType } = categorize(description, tx.amount)
       const category = applyLearnedRules(description, baseCategory, userId)
+      // If a learned rule changed the category, recompute the type
+      const type = category !== baseCategory ? typeForCategory(category, tx.amount) : baseType
       return {
         ...tx,
         description,
         bank,
         currency: 'MXN',
         category,
+        type,
         unique_key: makeKey(bank, tx.date, tx.description, tx.amount),
       }
     })
